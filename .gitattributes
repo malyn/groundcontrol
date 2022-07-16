@@ -1,0 +1,3 @@
+# Cargo files are always saved as LF, even on Windows.
+Cargo.lock text eol=lf
+Cargo.toml text eol=lf
