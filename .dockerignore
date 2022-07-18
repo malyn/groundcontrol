@@ -1,3 +1,12 @@
 /.git
 /.vscode
 /samples
+/target
+*.md
+.dockerignore
+.editorconfig
+.gitattributes
+.gitignore
+.prettierc
+Dockerfile
+Justfile

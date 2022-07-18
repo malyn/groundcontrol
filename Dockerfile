@@ -2,14 +2,13 @@
 ## Builder
 ####################################################################################################
 
-FROM rust:1.60.0 AS builder
+FROM rust:1.62.0-alpine3.16 AS builder
 
-RUN apt-get update && apt-get install -y --no-install-recommends musl-tools musl-dev
-RUN update-ca-certificates
+RUN apk update && apk add --no-cache musl-dev
 
 WORKDIR /app
 COPY ./ .
-RUN cargo build --target x86_64-unknown-linux-musl --release
+RUN cargo build --release
 
 
 ####################################################################################################
@@ -19,6 +18,6 @@ RUN cargo build --target x86_64-unknown-linux-musl --release
 FROM scratch
 
 WORKDIR /
-COPY --from=builder /app/target/x86_64-unknown-linux-musl/release/groundcontrol ./
+COPY --from=builder /app/target/release/groundcontrol ./
 
 ENTRYPOINT ["/groundcontrol"]
