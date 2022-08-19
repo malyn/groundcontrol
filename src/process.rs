@@ -3,7 +3,7 @@ use tracing::Level;
 
 use crate::{
     command::{Command, ExitStatus},
-    ProcessConfig, ProcessType,
+    config::process::{ProcessConfig, ProcessType, StopMechanism},
 };
 
 #[derive(Debug)]
@@ -107,35 +107,36 @@ impl Process {
     pub async fn stop(&mut self) -> anyhow::Result<()> {
         tracing::event!(Level::INFO, name = %self.config.name(), "Stopping process");
 
-        // Does this process have an `exec_stop` command? If so, use
-        // that, otherwise send it a SIGTERM event. Note that oneshot
-        // processes do not get a SIGTERM; they either provide an
-        // `exec_stop` or we ignore them during shutdown.
-        if let Some(exec_stop) = &self.config.exec_stop {
-            let mut cmd = Command::run(
-                self.config.name(),
-                None,
-                &exec_stop[0],
-                &exec_stop[1..],
-                &self.config.pass_environment,
-            )
-            .with_context(|| "Error starting exec_stop command")?;
-
-            match cmd.wait().await {
-                ExitStatus::Exited(0) => {}
-                ExitStatus::Exited(exit_code) => {
-                    bail!("exec_stop process failed: {exit_code}");
-                }
-                ExitStatus::Killed => {
-                    bail!("exec_stop process was killed");
+        match &self.config.exec_stop {
+            StopMechanism::Signal(signal) => {
+                if let Some(command) = &self.daemon {
+                    command
+                        .kill(signal.into())
+                        .await
+                        .with_context(|| "Error sending stop signal to daemon")?;
                 }
             }
-        } else if let Some(command) = &self.daemon {
-            command
-                .kill(nix::sys::signal::SIGTERM)
-                .await
-                .with_context(|| "Error sending SIGTERM to daemon")?;
-        }
+            StopMechanism::Command(exec_stop) => {
+                let mut cmd = Command::run(
+                    self.config.name(),
+                    None,
+                    &exec_stop.program,
+                    &exec_stop.args,
+                    &self.config.pass_environment,
+                )
+                .with_context(|| "Error starting exec_stop command")?;
+
+                match cmd.wait().await {
+                    ExitStatus::Exited(0) => {}
+                    ExitStatus::Exited(exit_code) => {
+                        bail!("exec_stop process failed: {exit_code}");
+                    }
+                    ExitStatus::Killed => {
+                        bail!("exec_stop process was killed");
+                    }
+                }
+            }
+        };
 
         Ok(())
     }

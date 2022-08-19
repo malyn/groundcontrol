@@ -17,8 +17,7 @@
 use anyhow::Context;
 use clap::Parser;
 use futures_util::FutureExt;
-use groundcontrol::{process::Process, ProcessConfig};
-use serde::Deserialize;
+use groundcontrol::{config::Config, process::Process};
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::Level;
 
@@ -31,11 +30,6 @@ struct Cli {
     check: bool,
 
     config_file: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct Config {
-    processes: Vec<ProcessConfig>,
 }
 
 #[tokio::main]
