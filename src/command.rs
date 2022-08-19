@@ -3,9 +3,10 @@
 use std::{collections::HashSet, env, process::Stdio};
 
 use anyhow::Context;
+use command_group::{AsyncCommandGroup, AsyncGroupChild};
 use nix::unistd::Pid;
 use regex::{Captures, Regex};
-use tokio::{process::Child, sync::watch};
+use tokio::sync::watch;
 use tracing::Level;
 
 /// Exit status returned by a command.
@@ -70,7 +71,9 @@ impl Command {
 
         // Run the command.
         tracing::event!(Level::DEBUG, %name, ?uid_gid, ?environment_vars, "Running command");
-        let child = command.spawn().with_context(|| "Error running command")?;
+        let child = command
+            .group_spawn()
+            .with_context(|| "Error running command")?;
         let pid = nix::unistd::Pid::from_raw(
             child
                 .id()
@@ -128,7 +131,7 @@ fn substitute_env_var(s: impl AsRef<str>) -> String {
 fn monitor_process(
     name: String,
     pid: Pid,
-    mut child: Child,
+    mut child: AsyncGroupChild,
     sender: watch::Sender<Option<ExitStatus>>,
 ) {
     tokio::spawn(async move {
