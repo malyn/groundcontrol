@@ -20,7 +20,7 @@ impl Default for ProcessType {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProcessConfig {
     name: Option<String>,
 
@@ -28,21 +28,21 @@ pub struct ProcessConfig {
     pub process_type: ProcessType,
 
     #[serde(default)]
-    pub pass_environment: HashSet<String>,
+    pub env_filter: HashSet<String>,
 
     #[serde(default)]
     pub user: Option<String>,
 
     #[serde(default)]
-    pub exec_start_pre: Option<Vec<String>>,
+    pub pre_start: Option<CommandConfig>,
 
-    pub exec_start: Vec<String>,
-
-    #[serde(default)]
-    pub exec_start_post: Option<Vec<String>>,
+    pub start: CommandConfig,
 
     #[serde(default)]
-    pub exec_stop: StopMechanism,
+    pub post_start: Option<CommandConfig>,
+
+    #[serde(default)]
+    pub stop: StopMechanism,
 }
 
 impl ProcessConfig {
@@ -50,10 +50,11 @@ impl ProcessConfig {
         if let Some(name) = &self.name {
             name
         } else {
-            self.exec_start[0]
+            self.start
+                .program
                 .split('/')
                 .last()
-                .unwrap_or_else(|| &self.exec_start[0])
+                .unwrap_or(&self.start.program)
         }
     }
 }

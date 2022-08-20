@@ -17,13 +17,13 @@ impl Process {
         tracing::event!(Level::INFO, name = %config.name(), "Starting process");
 
         // Perform the pre-start action, if provided.
-        if let Some(exec_start_pre) = &config.exec_start_pre {
+        if let Some(pre_start) = &config.pre_start {
             let mut cmd = Command::run(
                 config.name(),
                 None,
-                &exec_start_pre[0],
-                &exec_start_pre[1..],
-                &config.pass_environment,
+                &pre_start.program,
+                &pre_start.args,
+                &config.env_filter,
             )
             .with_context(|| "Error starting exec_start_pre command")?;
 
@@ -45,9 +45,9 @@ impl Process {
         let mut cmd = Command::run(
             config.name(),
             uid_gid,
-            &config.exec_start[0],
-            &config.exec_start[1..],
-            &config.pass_environment,
+            &config.start.program,
+            &config.start.args,
+            &config.env_filter,
         )
         .with_context(|| "Error starting exec_start command")?;
 
@@ -68,13 +68,13 @@ impl Process {
         };
 
         // Perform the post-start action, if provided.
-        if let Some(exec_start_post) = &config.exec_start_post {
+        if let Some(post_start) = &config.post_start {
             let mut cmd = Command::run(
                 config.name(),
                 None,
-                &exec_start_post[0],
-                &exec_start_post[1..],
-                &config.pass_environment,
+                &post_start.program,
+                &post_start.args,
+                &config.env_filter,
             )
             .with_context(|| "Error starting exec_start_post command")?;
 
@@ -107,7 +107,7 @@ impl Process {
     pub async fn stop(&mut self) -> anyhow::Result<()> {
         tracing::event!(Level::INFO, name = %self.config.name(), "Stopping process");
 
-        match &self.config.exec_stop {
+        match &self.config.stop {
             StopMechanism::Signal(signal) => {
                 if let Some(command) = &self.daemon {
                     command
@@ -122,7 +122,7 @@ impl Process {
                     None,
                     &exec_stop.program,
                     &exec_stop.args,
-                    &self.config.pass_environment,
+                    &self.config.env_filter,
                 )
                 .with_context(|| "Error starting exec_stop command")?;
 
