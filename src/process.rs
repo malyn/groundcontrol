@@ -18,14 +18,8 @@ impl Process {
 
         // Perform the pre-start action, if provided.
         if let Some(pre_start) = &config.pre_start {
-            let mut cmd = Command::run(
-                config.name(),
-                None,
-                &pre_start.program,
-                &pre_start.args,
-                &config.env_filter,
-            )
-            .with_context(|| "Error starting exec_start_pre command")?;
+            let mut cmd = Command::run(config.name(), pre_start)
+                .with_context(|| "Error starting exec_start_pre command")?;
 
             let exit_status = cmd.wait().await;
             if !matches!(exit_status, ExitStatus::Exited(0)) {
@@ -34,22 +28,8 @@ impl Process {
             }
         }
 
-        // Start the process itself.
-        let uid_gid: Option<(u32, u32)> = if let Some(username) = &config.user {
-            let user = users::get_user_by_name(username).with_context(|| "Unknown username")?;
-            Some((user.uid(), user.primary_group_id()))
-        } else {
-            None
-        };
-
-        let mut cmd = Command::run(
-            config.name(),
-            uid_gid,
-            &config.start.program,
-            &config.start.args,
-            &config.env_filter,
-        )
-        .with_context(|| "Error starting exec_start command")?;
+        let mut cmd = Command::run(config.name(), &config.start)
+            .with_context(|| "Error starting exec_start command")?;
 
         // What we do next depends on the process type: oneshot processes
         // are awaited right here, whereas daemons will be then awaited en
@@ -69,14 +49,8 @@ impl Process {
 
         // Perform the post-start action, if provided.
         if let Some(post_start) = &config.post_start {
-            let mut cmd = Command::run(
-                config.name(),
-                None,
-                &post_start.program,
-                &post_start.args,
-                &config.env_filter,
-            )
-            .with_context(|| "Error starting exec_start_post command")?;
+            let mut cmd = Command::run(config.name(), post_start)
+                .with_context(|| "Error starting exec_start_post command")?;
 
             let exit_status = cmd.wait().await;
             if !matches!(exit_status, ExitStatus::Exited(0)) {
@@ -117,14 +91,8 @@ impl Process {
                 }
             }
             StopMechanism::Command(exec_stop) => {
-                let mut cmd = Command::run(
-                    self.config.name(),
-                    None,
-                    &exec_stop.program,
-                    &exec_stop.args,
-                    &self.config.env_filter,
-                )
-                .with_context(|| "Error starting exec_stop command")?;
+                let mut cmd = Command::run(self.config.name(), exec_stop)
+                    .with_context(|| "Error starting exec_stop command")?;
 
                 match cmd.wait().await {
                     ExitStatus::Exited(0) => {}

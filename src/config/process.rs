@@ -1,7 +1,5 @@
 //! Process configuration.
 
-use std::collections::HashSet;
-
 use serde::Deserialize;
 
 use super::{command::CommandConfig, signal::SignalConfig};
@@ -26,12 +24,6 @@ pub struct ProcessConfig {
 
     #[serde(rename = "type", default)]
     pub process_type: ProcessType,
-
-    #[serde(default)]
-    pub env_filter: HashSet<String>,
-
-    #[serde(default)]
-    pub user: Option<String>,
 
     #[serde(default)]
     pub pre_start: Option<CommandConfig>,

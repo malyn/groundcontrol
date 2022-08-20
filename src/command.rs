@@ -1,13 +1,14 @@
 //! Runs commands and monitors their completion.
 
-use std::{collections::HashSet, env, process::Stdio};
+use std::{env, process::Stdio};
 
 use anyhow::Context;
 use command_group::{AsyncCommandGroup, AsyncGroupChild};
 use nix::unistd::Pid;
 use regex::{Captures, Regex};
 use tokio::sync::watch;
-use tracing::Level;
+
+use crate::config::command::CommandConfig;
 
 /// Exit status returned by a command.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -26,21 +27,21 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn run(
-        name: &str,
-        uid_gid: Option<(u32, u32)>,
-        program: &str,
-        args: &[String],
-        environment_vars: &HashSet<String>,
-    ) -> anyhow::Result<Self> {
-        tracing::event!(Level::DEBUG, %name, ?uid_gid, %program, "Running command");
+    pub fn run(name: &str, config: &CommandConfig) -> anyhow::Result<Self> {
+        tracing::debug!(%name, ?config, "Running command");
 
         // Initialize the command.
-        let mut command = tokio::process::Command::new(program);
+        let mut command = tokio::process::Command::new(&config.program);
 
         // Add the arguments, and perform environment variable
         // substitution.
-        command.args(args.iter().map(substitute_env_var).collect::<Vec<String>>());
+        command.args(
+            config
+                .args
+                .iter()
+                .map(substitute_env_var)
+                .collect::<Vec<String>>(),
+        );
 
         // Clear the environment, add back in `PATH`, then add any other
         // allowed environment variables.
@@ -50,7 +51,7 @@ impl Command {
             command.env("PATH", path);
         }
 
-        for key in environment_vars {
+        for key in &config.env_vars {
             command.env(
                 &key,
                 env::var(&key).with_context(|| "Missing environment variable")?,
@@ -58,9 +59,10 @@ impl Command {
         }
 
         // Set the uid and gid if provided.
-        if let Some((uid, gid)) = uid_gid {
-            command.uid(uid).gid(gid);
-        }
+        if let Some(username) = &config.user {
+            let user = users::get_user_by_name(username).with_context(|| "Unknown username")?;
+            command.uid(user.uid()).gid(user.primary_group_id());
+        };
 
         // Disable stdin, and map stdout and stderr to our own stdout
         // and stderr.
@@ -70,7 +72,6 @@ impl Command {
             .stderr(Stdio::inherit());
 
         // Run the command.
-        tracing::event!(Level::DEBUG, %name, ?uid_gid, ?environment_vars, "Running command");
         let child = command
             .group_spawn()
             .with_context(|| "Error running command")?;
@@ -80,7 +81,7 @@ impl Command {
                 .with_context(|| "Unable to get PID of just-started process")? as i32,
         );
 
-        tracing::event!(Level::DEBUG, %name, %pid, "Command running");
+        tracing::debug!(%name, %pid, "Command running");
 
         // Listen for the command to complete.
         let (sender, receiver) = watch::channel(None);
@@ -112,7 +113,7 @@ impl Command {
             // ignore the initial `None` value that will still be
             // present if the process has not yet stopped.
             if let Some(exit_status) = *self.exited.borrow_and_update() {
-                tracing::event!(Level::DEBUG, pid = %self.pid, "Command exited");
+                tracing::debug!(pid = %self.pid, "Command exited");
                 return exit_status;
             }
         }
@@ -137,21 +138,21 @@ fn monitor_process(
     tokio::spawn(async move {
         match child.wait().await {
             Err(err) => {
-                tracing::event!(Level::ERROR, %name, ?err, "Error waiting for command to exit");
+                tracing::error!(%name, ?err, "Error waiting for command to exit");
                 let _ = sender.send(Some(ExitStatus::Killed));
             }
             Ok(exit_status) => match exit_status.code() {
                 Some(exit_code) => {
                     if exit_code == 0 {
-                        tracing::event!(Level::DEBUG, %name, %pid, "Command exited cleanly");
+                        tracing::debug!(%name, %pid, "Command exited cleanly");
                     } else {
-                        tracing::event!(Level::ERROR, %name, %pid, %exit_code, "Command exited with non-zero exit code");
+                        tracing::error!(%name, %pid, %exit_code, "Command exited with non-zero exit code");
                     }
 
                     let _ = sender.send(Some(ExitStatus::Exited(exit_code)));
                 }
                 None => {
-                    tracing::event!(Level::DEBUG, %name, %pid, "Command was killed");
+                    tracing::debug!(%name, %pid, "Command was killed");
                     let _ = sender.send(Some(ExitStatus::Killed));
                 }
             },

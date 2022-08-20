@@ -1,5 +1,7 @@
 //! Command configuration
 
+use std::collections::HashSet;
+
 use serde::Deserialize;
 
 /// Configuration for a command, its arguments, and any execution
@@ -10,6 +12,9 @@ pub struct CommandConfig {
     /// User to run this command as, otherwise run the command as the
     /// user that executed Ground Control (most likely `root`).
     pub user: Option<String>,
+
+    /// Environment variables to pass through to the command.
+    pub env_vars: HashSet<String>,
 
     /// Program to execute.
     pub program: String,
@@ -32,6 +37,7 @@ impl From<SimpleOrDetailedCommandConfig> for CommandConfig {
             SimpleOrDetailedCommandConfig::SimpleCommand(config) => config.into(),
             SimpleOrDetailedCommandConfig::DetailedCommand(config) => Self {
                 user: config.user,
+                env_vars: config.env_vars,
                 ..config.command.into()
             },
         }
@@ -47,10 +53,13 @@ enum SimpleCommandConfig {
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "snake_case")]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct DetailedCommandConfig {
     #[serde(default)]
     user: Option<String>,
+
+    #[serde(default)]
+    env_vars: HashSet<String>,
 
     command: SimpleCommandConfig,
 }
@@ -67,6 +76,7 @@ impl From<SimpleCommandConfig> for CommandConfig {
 
         Self {
             user: None,
+            env_vars: Default::default(),
             program: command_vec[0].clone(),
             args: command_vec[1..].to_vec(),
         }
@@ -75,6 +85,8 @@ impl From<SimpleCommandConfig> for CommandConfig {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
     use serde::Deserialize;
 
     use crate::config::command::CommandConfig;
@@ -91,6 +103,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
+                env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -109,6 +122,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
+                env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -127,6 +141,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
+                env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -142,6 +157,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: Some(String::from("app")),
+                env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -160,6 +176,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
+                env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -170,12 +187,12 @@ mod tests {
             decoded.run
         );
 
-        let toml =
-            r#"run = { user = "app", command = ["/app/run-me.sh", "using", "these", "args"] }"#;
+        let toml = r#"run = { user = "app", env-vars = ["USER", "HOME"], command = ["/app/run-me.sh", "using", "these", "args"] }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
             CommandConfig {
                 user: Some(String::from("app")),
+                env_vars: HashSet::from(["USER".into(), "HOME".into()]),
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
