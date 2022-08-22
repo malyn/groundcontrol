@@ -4,26 +4,10 @@ use serde::Deserialize;
 
 use super::{command::CommandSpec, signal::SignalConfig};
 
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProcessType {
-    Daemon,
-    Oneshot,
-}
-
-impl Default for ProcessType {
-    fn default() -> Self {
-        Self::Daemon
-    }
-}
-
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
-pub struct ProcessConfig {
+pub struct ProcessSpec {
     pub name: String,
-
-    #[serde(rename = "type", default)]
-    pub process_type: ProcessType,
 
     #[serde(default)]
     pub pre: Option<CommandSpec>,
