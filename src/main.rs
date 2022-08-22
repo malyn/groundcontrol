@@ -16,9 +16,11 @@
 
 use anyhow::Context;
 use clap::Parser;
-use futures_util::FutureExt;
 use groundcontrol::{config::Config, process::Process};
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::{
+    signal::unix::{signal, SignalKind},
+    sync::mpsc,
+};
 use tracing::Level;
 
 #[derive(Parser)]
@@ -73,79 +75,66 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Create the shutdown channel, which will be used to initiate the
+    // shutdown process, regardless of if this is a graceful shutdown
+    // triggered by a UNIX signal, or an unexpected shutdown caused by
+    // the failure of a daemon process.
+    let (shutdown_sender, mut shutdown_receiver) = mpsc::unbounded_channel();
+
     // Start every process in the order they were found in the config
     // file.
     let mut processes: Vec<Process> = Default::default();
     for process_config in config.processes.into_iter() {
         // TODO: Need to start shutting down if this fails.
-        let process = Process::start(process_config)
+        let process = Process::start(process_config, shutdown_sender.clone())
             .await
             .with_context(|| "Unable to start process")?;
         processes.push(process);
     }
 
-    // Wait for *any* of the daemon processes to exit or for SIGTERM or
-    // SIGINT signals (which then begins the graceful shutdown process).
-    let sigint_task = tokio::spawn(async move {
+    // Convert signals into shutdown messages.
+    let sigint_shutdown_sender = shutdown_sender.clone();
+    tokio::spawn(async move {
         signal(SignalKind::interrupt())
             .expect("Failed to register SIGINT handler")
             .recv()
             .await;
-    })
-    .map(|_| ());
+        let _ = sigint_shutdown_sender.send(());
+    });
 
-    let sigterm_task = tokio::spawn(async move {
+    let sigterm_shutdown_sender = shutdown_sender.clone();
+    tokio::spawn(async move {
         signal(SignalKind::terminate())
             .expect("Failed to register SIGTERM handler")
             .recv()
             .await;
-    })
-    .map(|_| ());
+        let _ = sigterm_shutdown_sender.send(());
+    });
 
-    tracing::event!(
-        Level::INFO,
+    tracing::info!(
         process_count = %processes.len(),
-        "Startup phase completed; waiting for shutdown signal or process exit"
+        "Startup phase completed; waiting for shutdown signal or any process to exit."
     );
 
-    let signals = processes
-        .iter_mut()
-        .map(|p| {
-            if p.is_daemon() {
-                p.wait().map(|_| ()).boxed_local()
-            } else {
-                // Oneshot processes exit immediately, and so should not
-                // trigger a shutdown. (but we need to put something
-                // into the iterator, so we put a future that never
-                // completes)
-                futures_util::future::pending().boxed_local()
-            }
-        })
-        .chain([sigint_task.boxed_local(), sigterm_task.boxed_local()]);
-
-    let (_result, ready_index, rest) = futures_util::future::select_all(signals).await;
-    drop(rest);
-
-    if ready_index < processes.len() {
-        processes.remove(ready_index);
-    }
+    shutdown_receiver
+        .recv()
+        .await
+        .expect("All shutdown senders closed without sending a shutdown signal.");
 
     // Either one process exited or we received a stop signal; stop all
     // of the processes in the *reverse* order in which they were
     // started.
-    tracing::event!(
-        Level::INFO,
-        %ready_index,
-        "Completion signal triggered; shutting down all processes"
-    );
+    tracing::info!("Completion signal triggered; shutting down all processes");
 
-    for process in processes.iter_mut().rev() {
+    while let Some(process) = processes.pop() {
+        // TODO: We could do some sort of thing here where we check to
+        // see if this is the process that triggered the shutdown and,
+        // *still* `stop` it (since we may need to run `post`), but not
+        // actually kill it, since it has already stopped. Basically,
+        // just some extra tracking to avoid the WARN log that happens
+        // when trying to kill a process that has already exited.
         if let Err(err) = process.stop().await {
-            tracing::event!(Level::ERROR, ?err, "Error stopping process");
-        }
-
-        if process.is_daemon() {
-            process.wait().await;
+            tracing::error!(?err, "Error stopping process");
         }
     }
 

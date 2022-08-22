@@ -20,35 +20,22 @@ impl Default for ProcessType {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProcessConfig {
-    name: Option<String>,
+    pub name: String,
 
     #[serde(rename = "type", default)]
     pub process_type: ProcessType,
 
     #[serde(default)]
-    pub pre_start: Option<CommandConfig>,
-
-    pub start: CommandConfig,
+    pub pre: Option<CommandConfig>,
 
     #[serde(default)]
-    pub post_start: Option<CommandConfig>,
+    pub run: Option<CommandConfig>,
 
     #[serde(default)]
     pub stop: StopMechanism,
-}
 
-impl ProcessConfig {
-    pub fn name(&self) -> &str {
-        if let Some(name) = &self.name {
-            name
-        } else {
-            self.start
-                .program
-                .split('/')
-                .last()
-                .unwrap_or(&self.start.program)
-        }
-    }
+    #[serde(default)]
+    pub post: Option<CommandConfig>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]

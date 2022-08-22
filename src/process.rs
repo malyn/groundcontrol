@@ -1,111 +1,126 @@
 use anyhow::{bail, Context};
-use tracing::Level;
+use tokio::sync::{mpsc, oneshot};
 
 use crate::{
-    command::{Command, ExitStatus},
-    config::process::{ProcessConfig, ProcessType, StopMechanism},
+    command::{self, CommandControl, ExitStatus},
+    config::process::{ProcessConfig, StopMechanism},
 };
 
 #[derive(Debug)]
 pub struct Process {
     config: ProcessConfig,
-    daemon: Option<Command>,
+    handle: ProcessHandle,
+}
+
+#[derive(Debug)]
+enum ProcessHandle {
+    Daemon(CommandControl, oneshot::Receiver<ExitStatus>),
+    OneShot,
 }
 
 impl Process {
-    pub async fn start(config: ProcessConfig) -> anyhow::Result<Self> {
-        tracing::event!(Level::INFO, name = %config.name(), "Starting process");
+    pub async fn start(
+        config: ProcessConfig,
+        shutdown_sender: mpsc::UnboundedSender<()>,
+    ) -> anyhow::Result<Self> {
+        tracing::info!(name = %config.name, "Starting process");
 
-        // Perform the pre-start action, if provided.
-        if let Some(pre_start) = &config.pre_start {
-            let mut cmd = Command::run(config.name(), pre_start)
-                .with_context(|| "Error starting exec_start_pre command")?;
+        // Perform the pre-run action, if provided.
+        if let Some(pre_run) = &config.pre {
+            let (_control, monitor) = command::run(&config.name, pre_run)
+                .with_context(|| "Error executing pre-run command")?;
 
-            let exit_status = cmd.wait().await;
+            let exit_status = monitor.wait().await;
             if !matches!(exit_status, ExitStatus::Exited(0)) {
                 // TODO: Start shutting everything down if we get this.
-                panic!("exec_start_pre command failed");
+                panic!("pre-run command failed");
             }
         }
 
-        let mut cmd = Command::run(config.name(), &config.start)
-            .with_context(|| "Error starting exec_start command")?;
+        // Run the process itself (if this is a daemon process with a
+        // `run` command).
+        let handle = if let Some(run) = &config.run {
+            let (daemon_sender, daemon_receiver) = oneshot::channel();
 
-        // What we do next depends on the process type: oneshot processes
-        // are awaited right here, whereas daemons will be then awaited en
-        // masse after all of the processes have been started.
-        let daemon = match config.process_type {
-            ProcessType::Oneshot => {
-                let exit_status = cmd.wait().await;
-                if !matches!(exit_status, ExitStatus::Exited(0)) {
-                    // TODO: Start shutting everything down if we get this.
-                    panic!("exec_start command failed");
+            let (control, monitor) =
+                command::run(&config.name, run).with_context(|| "Error starting run command")?;
+
+            // Spawn a task to wait for the command to exit, then notify
+            // both ourselves (to allow `stop` to return) and the
+            // shutdown listener that our daemon process has exited.
+            tokio::spawn(async move {
+                let exit_status = monitor.wait().await;
+
+                if daemon_sender.send(exit_status).is_err() {
+                    tracing::error!("Daemon receiver dropped before receiving exit signal.");
                 }
 
-                None
-            }
-            ProcessType::Daemon => Some(cmd),
+                if let Err(err) = shutdown_sender.send(()) {
+                    tracing::error!(
+                        ?err,
+                        "Shutdown receiver dropped before all processes have exited."
+                    );
+                }
+            });
+
+            ProcessHandle::Daemon(control, daemon_receiver)
+        } else {
+            ProcessHandle::OneShot
         };
 
-        // Perform the post-start action, if provided.
-        if let Some(post_start) = &config.post_start {
-            let mut cmd = Command::run(config.name(), post_start)
-                .with_context(|| "Error starting exec_start_post command")?;
+        Ok(Self { config, handle })
+    }
 
-            let exit_status = cmd.wait().await;
+    pub async fn stop(self) -> anyhow::Result<()> {
+        tracing::info!(name = %self.config.name, "Stopping process.");
+
+        // Stop the process (which is only required for daemon
+        // processes; one-shot processes never "started").
+        match self.handle {
+            ProcessHandle::Daemon(control, daemon_receiver) => {
+                // Stop the daemon.
+                match self.config.stop {
+                    StopMechanism::Signal(signal) => {
+                        if let Err(err) = control.kill(signal.into()) {
+                            tracing::warn!(?err, "Error stopping daemon process.");
+                        }
+                    }
+                    StopMechanism::Command(command) => {
+                        let (_pid, exit_receiver) = command::run(&self.config.name, &command)
+                            .with_context(|| "Error executing stop command")?;
+
+                        match exit_receiver.wait().await {
+                            ExitStatus::Exited(0) => {}
+                            ExitStatus::Exited(exit_code) => {
+                                bail!("stop process failed: {exit_code}");
+                            }
+                            ExitStatus::Killed => {
+                                bail!("stop process was killed");
+                            }
+                        }
+                    }
+                };
+
+                // Wait for the daemon to stop.
+                if daemon_receiver.await.is_err() {
+                    tracing::error!("Daemon sender dropped before delivering exit signal.");
+                }
+            }
+            ProcessHandle::OneShot => {}
+        };
+
+        // Execute the `post`(-run) command.
+        if let Some(post_run) = &self.config.post {
+            let (_control, monitor) = command::run(&self.config.name, post_run)
+                .with_context(|| "Error executing post-run command")?;
+
+            let exit_status = monitor.wait().await;
             if !matches!(exit_status, ExitStatus::Exited(0)) {
-                // TODO: Start shutting everything down if we get this.
-                panic!("exec_start_post command failed");
+                tracing::error!(?exit_status, "post-run command failed.");
             }
         }
 
-        // Return the process (if this is a long-running daemon, otherwise
-        // `None`, since there is nothing to monitor).
-        Ok(Self { config, daemon })
-    }
-
-    pub fn is_daemon(&self) -> bool {
-        self.daemon.is_some()
-    }
-
-    /// Wait for the process to exit (if it is a daemon); returns
-    /// immediately if this is was a one-shot process.
-    pub async fn wait(&mut self) -> ExitStatus {
-        self.daemon
-            .as_mut()
-            .expect("Cannot wait on oneshot process")
-            .wait()
-            .await
-    }
-
-    pub async fn stop(&mut self) -> anyhow::Result<()> {
-        tracing::event!(Level::INFO, name = %self.config.name(), "Stopping process");
-
-        match &self.config.stop {
-            StopMechanism::Signal(signal) => {
-                if let Some(command) = &self.daemon {
-                    command
-                        .kill(signal.into())
-                        .await
-                        .with_context(|| "Error sending stop signal to daemon")?;
-                }
-            }
-            StopMechanism::Command(exec_stop) => {
-                let mut cmd = Command::run(self.config.name(), exec_stop)
-                    .with_context(|| "Error starting exec_stop command")?;
-
-                match cmd.wait().await {
-                    ExitStatus::Exited(0) => {}
-                    ExitStatus::Exited(exit_code) => {
-                        bail!("exec_stop process failed: {exit_code}");
-                    }
-                    ExitStatus::Killed => {
-                        bail!("exec_stop process was killed");
-                    }
-                }
-            }
-        };
-
+        // The process has been stopped.
         Ok(())
     }
 }
