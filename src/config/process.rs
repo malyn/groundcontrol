@@ -2,7 +2,7 @@
 
 use serde::Deserialize;
 
-use super::{command::CommandConfig, signal::SignalConfig};
+use super::{command::CommandSpec, signal::SignalConfig};
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -26,16 +26,16 @@ pub struct ProcessConfig {
     pub process_type: ProcessType,
 
     #[serde(default)]
-    pub pre: Option<CommandConfig>,
+    pub pre: Option<CommandSpec>,
 
     #[serde(default)]
-    pub run: Option<CommandConfig>,
+    pub run: Option<CommandSpec>,
 
     #[serde(default)]
     pub stop: StopMechanism,
 
     #[serde(default)]
-    pub post: Option<CommandConfig>,
+    pub post: Option<CommandSpec>,
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
@@ -43,7 +43,7 @@ pub struct ProcessConfig {
 pub enum StopMechanism {
     Signal(SignalConfig),
 
-    Command(CommandConfig),
+    Command(CommandSpec),
 }
 
 impl Default for StopMechanism {

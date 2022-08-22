@@ -4,11 +4,12 @@ use std::collections::HashSet;
 
 use serde::Deserialize;
 
-/// Configuration for a command, its arguments, and any execution
-/// properties (such as the user under which to run the command).
+/// Specification for a command, its arguments, and any execution
+/// properties (such as the user under which to run the command, or the
+/// environment variables to pass through to the command).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(from = "SimpleOrDetailedCommandConfig")]
-pub struct CommandConfig {
+#[serde(from = "CommandConfig")]
+pub struct CommandSpec {
     /// User to run this command as, otherwise run the command as the
     /// user that executed Ground Control (most likely `root`).
     pub user: Option<String>,
@@ -25,62 +26,73 @@ pub struct CommandConfig {
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
 #[serde(untagged)]
-enum SimpleOrDetailedCommandConfig {
-    SimpleCommand(SimpleCommandConfig),
+enum CommandConfig {
+    Simple(CommandLine),
 
-    DetailedCommand(DetailedCommandConfig),
+    Detailed(DetailedCommandLine),
 }
 
-impl From<SimpleOrDetailedCommandConfig> for CommandConfig {
-    fn from(config: SimpleOrDetailedCommandConfig) -> Self {
+impl From<CommandConfig> for CommandSpec {
+    fn from(config: CommandConfig) -> Self {
         match config {
-            SimpleOrDetailedCommandConfig::SimpleCommand(config) => config.into(),
-            SimpleOrDetailedCommandConfig::DetailedCommand(config) => Self {
-                user: config.user,
-                env_vars: config.env_vars,
-                ..config.command.into()
-            },
+            CommandConfig::Simple(config) => {
+                let (program, args) = config.program_and_args();
+                Self {
+                    user: None,
+                    env_vars: Default::default(),
+                    program,
+                    args,
+                }
+            }
+            CommandConfig::Detailed(config) => {
+                let (program, args) = config.command.program_and_args();
+                Self {
+                    user: config.user,
+                    env_vars: config.env_vars,
+                    program,
+                    args,
+                }
+            }
         }
     }
 }
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
 #[serde(untagged)]
-enum SimpleCommandConfig {
+enum CommandLine {
     CommandString(String),
 
     CommandVector(Vec<String>),
 }
 
+impl CommandLine {
+    fn program_and_args(&self) -> (String, Vec<String>) {
+        let command_vec = match self {
+            // TODO: This won't handle quoted arguments with spaces (for
+            // example), so really we should parse this using a more
+            // correct, shell-like parser. OTOH, we could just say that
+            // anything complicated needs to use the vector format...
+            CommandLine::CommandString(line) => line
+                .split(' ')
+                .map(|s| s.to_owned())
+                .collect::<Vec<String>>(),
+            CommandLine::CommandVector(v) => v.clone(),
+        };
+
+        (command_vec[0].clone(), command_vec[1..].to_vec())
+    }
+}
+
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
-struct DetailedCommandConfig {
+struct DetailedCommandLine {
     #[serde(default)]
     user: Option<String>,
 
     #[serde(default)]
     env_vars: HashSet<String>,
 
-    command: SimpleCommandConfig,
-}
-
-impl From<SimpleCommandConfig> for CommandConfig {
-    fn from(config: SimpleCommandConfig) -> Self {
-        let command_vec = match config {
-            SimpleCommandConfig::CommandString(line) => line
-                .split(' ')
-                .map(|s| s.to_owned())
-                .collect::<Vec<String>>(),
-            SimpleCommandConfig::CommandVector(v) => v,
-        };
-
-        Self {
-            user: None,
-            env_vars: Default::default(),
-            program: command_vec[0].clone(),
-            args: command_vec[1..].to_vec(),
-        }
-    }
+    command: CommandLine,
 }
 
 #[cfg(test)]
@@ -89,11 +101,11 @@ mod tests {
 
     use serde::Deserialize;
 
-    use crate::config::command::CommandConfig;
+    use crate::config::command::CommandSpec;
 
     #[derive(Debug, Deserialize, PartialEq)]
     struct CommandConfigTest {
-        run: CommandConfig,
+        run: CommandSpec,
     }
 
     #[test]
@@ -101,7 +113,7 @@ mod tests {
         let toml = r#"run = "/app/run-me.sh using these args""#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandConfig {
+            CommandSpec {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -120,7 +132,7 @@ mod tests {
         let toml = r#"run = ["/app/run-me.sh", "using", "these", "args"]"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandConfig {
+            CommandSpec {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -139,7 +151,7 @@ mod tests {
         let toml = r#"run = { command = "/app/run-me.sh using these args" }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandConfig {
+            CommandSpec {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -155,7 +167,7 @@ mod tests {
         let toml = r#"run = { user = "app", command = "/app/run-me.sh using these args" }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandConfig {
+            CommandSpec {
                 user: Some(String::from("app")),
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -174,7 +186,7 @@ mod tests {
         let toml = r#"run = { command = ["/app/run-me.sh", "using", "these", "args"] }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandConfig {
+            CommandSpec {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -190,7 +202,7 @@ mod tests {
         let toml = r#"run = { user = "app", env-vars = ["USER", "HOME"], command = ["/app/run-me.sh", "using", "these", "args"] }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandConfig {
+            CommandSpec {
                 user: Some(String::from("app")),
                 env_vars: HashSet::from(["USER".into(), "HOME".into()]),
                 program: String::from("/app/run-me.sh"),
@@ -208,10 +220,10 @@ mod tests {
     fn requires_command_in_detailed_command() {
         let toml = r#"run = { }"#;
         let error = toml::from_str::<CommandConfigTest>(toml).unwrap_err();
-        assert_eq!("data did not match any variant of untagged enum SimpleOrDetailedCommandConfig for key `run` at line 1 column 1", error.to_string(),);
+        assert_eq!("data did not match any variant of untagged enum CommandConfig for key `run` at line 1 column 1", error.to_string(),);
 
         let toml = r#"run = { user = "app" }"#;
         let error = toml::from_str::<CommandConfigTest>(toml).unwrap_err();
-        assert_eq!("data did not match any variant of untagged enum SimpleOrDetailedCommandConfig for key `run` at line 1 column 1", error.to_string(),);
+        assert_eq!("data did not match any variant of untagged enum CommandConfig for key `run` at line 1 column 1", error.to_string(),);
     }
 }
