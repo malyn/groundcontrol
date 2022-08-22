@@ -1,15 +1,77 @@
-//! Command configuration
-
 use std::collections::HashSet;
 
 use serde::Deserialize;
 
-/// Specification for a command, its arguments, and any execution
+#[derive(Clone, Debug, Deserialize)]
+pub struct Config {
+    pub processes: Vec<ProcessConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+pub struct ProcessConfig {
+    pub name: String,
+
+    #[serde(default)]
+    pub pre: Option<CommandConfig>,
+
+    #[serde(default)]
+    pub run: Option<CommandConfig>,
+
+    #[serde(default)]
+    pub stop: StopMechanism,
+
+    #[serde(default)]
+    pub post: Option<CommandConfig>,
+}
+
+#[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum StopMechanism {
+    Signal(SignalConfig),
+
+    Command(CommandConfig),
+}
+
+impl Default for StopMechanism {
+    fn default() -> Self {
+        StopMechanism::Signal(SignalConfig::SIGTERM)
+    }
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Deserialize)]
+pub enum SignalConfig {
+    SIGINT,
+    SIGQUIT,
+    SIGTERM,
+}
+
+impl From<SignalConfig> for nix::sys::signal::Signal {
+    fn from(signal: SignalConfig) -> Self {
+        match signal {
+            SignalConfig::SIGINT => Self::SIGINT,
+            SignalConfig::SIGQUIT => Self::SIGQUIT,
+            SignalConfig::SIGTERM => Self::SIGTERM,
+        }
+    }
+}
+
+impl From<&SignalConfig> for nix::sys::signal::Signal {
+    fn from(signal: &SignalConfig) -> Self {
+        match signal {
+            SignalConfig::SIGINT => Self::SIGINT,
+            SignalConfig::SIGQUIT => Self::SIGQUIT,
+            SignalConfig::SIGTERM => Self::SIGTERM,
+        }
+    }
+}
+
+/// Configuration for a command, its arguments, and any execution
 /// properties (such as the user under which to run the command, or the
 /// environment variables to pass through to the command).
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
-#[serde(from = "CommandConfig")]
-pub struct CommandSpec {
+#[serde(from = "CommandLineConfig")]
+pub struct CommandConfig {
     /// User to run this command as, otherwise run the command as the
     /// user that executed Ground Control (most likely `root`).
     pub user: Option<String>,
@@ -26,16 +88,16 @@ pub struct CommandSpec {
 
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
 #[serde(untagged)]
-enum CommandConfig {
+enum CommandLineConfig {
     Simple(CommandLine),
 
     Detailed(DetailedCommandLine),
 }
 
-impl From<CommandConfig> for CommandSpec {
-    fn from(config: CommandConfig) -> Self {
+impl From<CommandLineConfig> for CommandConfig {
+    fn from(config: CommandLineConfig) -> Self {
         match config {
-            CommandConfig::Simple(config) => {
+            CommandLineConfig::Simple(config) => {
                 let (program, args) = config.program_and_args();
                 Self {
                     user: None,
@@ -44,7 +106,7 @@ impl From<CommandConfig> for CommandSpec {
                     args,
                 }
             }
-            CommandConfig::Detailed(config) => {
+            CommandLineConfig::Detailed(config) => {
                 let (program, args) = config.command.program_and_args();
                 Self {
                     user: config.user,
@@ -111,15 +173,25 @@ struct DetailedCommandLine {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use serde::Deserialize;
 
-    use crate::config::command::CommandSpec;
+    use super::*;
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct StopMechanismTest {
+        stop: StopMechanism,
+    }
+
+    #[test]
+    fn supports_signal_names_in_stop() {
+        let toml = r#"stop = "SIGTERM""#;
+        let decoded: StopMechanismTest = toml::from_str(toml).expect("Failed to parse test TOML");
+        assert_eq!(StopMechanism::Signal(SignalConfig::SIGTERM), decoded.stop);
+    }
 
     #[derive(Debug, Deserialize, PartialEq)]
     struct CommandConfigTest {
-        run: CommandSpec,
+        run: CommandConfig,
     }
 
     #[test]
@@ -127,7 +199,7 @@ mod tests {
         let toml = r#"run = "/app/run-me.sh using these args""#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandSpec {
+            CommandConfig {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -146,7 +218,7 @@ mod tests {
         let toml = r#"run = ["/app/run-me.sh", "using", "these", "args"]"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandSpec {
+            CommandConfig {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -165,7 +237,7 @@ mod tests {
         let toml = r#"run = { command = "/app/run-me.sh using these args" }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandSpec {
+            CommandConfig {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -181,7 +253,7 @@ mod tests {
         let toml = r#"run = { user = "app", command = "/app/run-me.sh using these args" }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandSpec {
+            CommandConfig {
                 user: Some(String::from("app")),
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -200,7 +272,7 @@ mod tests {
         let toml = r#"run = { command = ["/app/run-me.sh", "using", "these", "args"] }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandSpec {
+            CommandConfig {
                 user: None,
                 env_vars: Default::default(),
                 program: String::from("/app/run-me.sh"),
@@ -216,7 +288,7 @@ mod tests {
         let toml = r#"run = { user = "app", env-vars = ["USER", "HOME"], command = ["/app/run-me.sh", "using", "these", "args"] }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
-            CommandSpec {
+            CommandConfig {
                 user: Some(String::from("app")),
                 env_vars: HashSet::from(["USER".into(), "HOME".into()]),
                 program: String::from("/app/run-me.sh"),
@@ -234,10 +306,10 @@ mod tests {
     fn requires_command_in_detailed_command() {
         let toml = r#"run = { }"#;
         let error = toml::from_str::<CommandConfigTest>(toml).unwrap_err();
-        assert_eq!("data did not match any variant of untagged enum CommandConfig for key `run` at line 1 column 1", error.to_string(),);
+        assert_eq!("data did not match any variant of untagged enum CommandLineConfig for key `run` at line 1 column 1", error.to_string(),);
 
         let toml = r#"run = { user = "app" }"#;
         let error = toml::from_str::<CommandConfigTest>(toml).unwrap_err();
-        assert_eq!("data did not match any variant of untagged enum CommandConfig for key `run` at line 1 column 1", error.to_string(),);
+        assert_eq!("data did not match any variant of untagged enum CommandLineConfig for key `run` at line 1 column 1", error.to_string(),);
     }
 }

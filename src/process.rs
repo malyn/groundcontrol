@@ -3,12 +3,12 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     command::{self, CommandControl, ExitStatus},
-    config::process::{ProcessSpec, StopMechanism},
+    config::{ProcessConfig, StopMechanism},
 };
 
 #[derive(Debug)]
 pub struct Process {
-    config: ProcessSpec,
+    config: ProcessConfig,
     handle: ProcessHandle,
 }
 
@@ -20,7 +20,7 @@ enum ProcessHandle {
 
 impl Process {
     pub async fn start(
-        config: ProcessSpec,
+        config: ProcessConfig,
         shutdown_sender: mpsc::UnboundedSender<()>,
     ) -> anyhow::Result<Self> {
         tracing::info!(name = %config.name, "Starting process");

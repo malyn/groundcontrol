@@ -8,7 +8,7 @@ use nix::unistd::Pid;
 use regex::{Captures, Regex};
 use tokio::sync::oneshot;
 
-use crate::config::command::CommandSpec;
+use crate::config::CommandConfig;
 
 /// Exit status returned by a command.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -47,7 +47,7 @@ impl CommandMonitor {
     }
 }
 
-pub fn run(name: &str, config: &CommandSpec) -> anyhow::Result<(CommandControl, CommandMonitor)> {
+pub fn run(name: &str, config: &CommandConfig) -> anyhow::Result<(CommandControl, CommandMonitor)> {
     tracing::debug!(%name, ?config, "Running command");
 
     // Initialize the command.
