@@ -66,20 +66,34 @@ enum CommandLine {
 }
 
 impl CommandLine {
+    /// Parse the Command Line into the program to execute, and the
+    /// arguments to that program.
     fn program_and_args(&self) -> (String, Vec<String>) {
-        let command_vec = match self {
-            // TODO: This won't handle quoted arguments with spaces (for
-            // example), so really we should parse this using a more
-            // correct, shell-like parser. OTOH, we could just say that
-            // anything complicated needs to use the vector format...
-            CommandLine::CommandString(line) => line
-                .split(' ')
-                .map(|s| s.to_owned())
-                .collect::<Vec<String>>(),
-            CommandLine::CommandVector(v) => v.clone(),
-        };
+        match self {
+            CommandLine::CommandString(line) => {
+                // TODO: This won't handle quoted arguments with spaces
+                // (for example), so really we should parse this using a
+                // more correct, shell-like parser. OTOH, we could just
+                // say that anything complicated needs to use the vector
+                // format...
+                let mut elems = line.split(' ');
 
-        (command_vec[0].clone(), command_vec[1..].to_vec())
+                let program = elems
+                    .next()
+                    .expect("Command line must not be empty")
+                    .to_string();
+                let args = elems.map(|s| s.to_string()).collect();
+
+                (program, args)
+            }
+
+            CommandLine::CommandVector(v) => {
+                let program = v[0].to_string();
+                let args = v[1..].to_vec();
+
+                (program, args)
+            }
+        }
     }
 }
 
