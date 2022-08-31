@@ -20,6 +20,7 @@ pub enum ExitStatus {
     Killed,
 }
 
+/// Control handle for a Command, used to send signals to the command.
 #[derive(Debug)]
 pub struct CommandControl {
     name: String,
@@ -27,19 +28,23 @@ pub struct CommandControl {
 }
 
 impl CommandControl {
-    pub fn kill(self, signal: nix::sys::signal::Signal) -> anyhow::Result<()> {
+    /// Sends a signal to the process.
+    pub fn kill(&self, signal: nix::sys::signal::Signal) -> anyhow::Result<()> {
         nix::sys::signal::kill(self.pid, signal)
             .with_context(|| format!("Error sending {} signal to {}", signal, self.name))?;
         Ok(())
     }
 }
 
+/// Monitoring handle for a Command, used to wait for the Command to
+/// exit.
 #[derive(Debug)]
 pub struct CommandMonitor {
     monitor: oneshot::Receiver<ExitStatus>,
 }
 
 impl CommandMonitor {
+    /// Waits for the command to exit and returns the exit status.
     pub async fn wait(self) -> ExitStatus {
         self.monitor
             .await
@@ -47,6 +52,7 @@ impl CommandMonitor {
     }
 }
 
+/// Runs the command and returns the control and monitor handles.
 pub fn run(name: &str, config: &CommandConfig) -> anyhow::Result<(CommandControl, CommandMonitor)> {
     tracing::debug!(%name, ?config, "Running command");
 

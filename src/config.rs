@@ -1,35 +1,52 @@
+//! Configuration structs.
+
 use std::collections::HashSet;
 
 use serde::Deserialize;
 
+/// Ground Control configuration.
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
+    /// *Ordered* list of processes to start.
     pub processes: Vec<ProcessConfig>,
 }
 
+/// Process configuration.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "kebab-case", deny_unknown_fields)]
 pub struct ProcessConfig {
+    /// Name of the process (used in logging/monitoring).
     pub name: String,
 
+    /// Optional command to run *before* the `run` command.
     #[serde(default)]
     pub pre: Option<CommandConfig>,
 
+    /// Optional `run` command; if present, this process is considered a
+    /// "daemon process" and Ground Control will monitor the run
+    /// command, shutting down all of the processes if any run command
+    /// exits.
     #[serde(default)]
     pub run: Option<CommandConfig>,
 
+    /// Mechanism for stopping the process *if this is a daemon process*
+    /// (ignored if the process does not have a `run` command).
     #[serde(default)]
     pub stop: StopMechanism,
 
+    /// Optional command to run after the process has been stopped.
     #[serde(default)]
     pub post: Option<CommandConfig>,
 }
 
+/// Mechanism used to stop a daemon process.
 #[derive(Clone, Eq, PartialEq, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum StopMechanism {
+    /// Stop the process using a signal.
     Signal(SignalConfig),
 
+    /// Stop the process by running a command.
     Command(CommandConfig),
 }
 
@@ -39,10 +56,16 @@ impl Default for StopMechanism {
     }
 }
 
+/// Signals used to stop a daemon process.
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Deserialize)]
 pub enum SignalConfig {
+    /// SIGINT
     SIGINT,
+
+    /// SIGQUIT
     SIGQUIT,
+
+    /// SIGTERM
     SIGTERM,
 }
 

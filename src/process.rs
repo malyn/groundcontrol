@@ -1,3 +1,5 @@
+//! Starts and stops processes.
+
 use anyhow::{bail, Context};
 use tokio::sync::{mpsc, oneshot};
 
@@ -6,6 +8,7 @@ use crate::{
     config::{ProcessConfig, StopMechanism},
 };
 
+/// Process being managed by Ground Control.
 #[derive(Debug)]
 pub struct Process {
     config: ProcessConfig,
@@ -19,6 +22,7 @@ enum ProcessHandle {
 }
 
 impl Process {
+    /// Starts the process and returns a handle to the process.
     pub async fn start(
         config: ProcessConfig,
         shutdown_sender: mpsc::UnboundedSender<()>,
@@ -71,6 +75,9 @@ impl Process {
         Ok(Self { config, handle })
     }
 
+    /// Stops the process: executes the `stop` command/signal if this is
+    /// a daemon process; waits for the process to exit; runs the `post`
+    /// command (if present).
     pub async fn stop(self) -> anyhow::Result<()> {
         tracing::info!(name = %self.config.name, "Stopping process.");
 
