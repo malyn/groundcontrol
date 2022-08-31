@@ -9,6 +9,10 @@ _default:
 opendocs:
     cargo doc --open
 
+# Check licenses, unmaintained crates, vulnerabilities, etc.
+check:
+    cargo deny check
+
 # Display (non-dev) dependency tree
 tree:
     cargo tree --edges normal
