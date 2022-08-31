@@ -1,0 +1,106 @@
+name: Build & Publish
+
+on:
+  push:
+    # Publish `main` as Docker `latest` image.
+    branches:
+      - main
+
+    # Publish `v1.2.3` tags as releases.
+    tags:
+      - v*
+
+  pull_request:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        rust:
+          - 1.60.0
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Install Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: ${{ matrix.rust }}
+          override: true
+          components: clippy, rustfmt
+
+      - name: Install tools
+        uses: taiki-e/install-action@v1
+        with:
+          tool: cargo-deny,nextest
+
+      - name: Lint
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all --all-features -- --deny warnings
+
+      - name: Audit
+        uses: actions-rs/cargo@v1
+        with:
+          command: deny
+          args: check
+
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: nextest
+          args: run --all-features
+
+  publish:
+    needs: build
+
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    env:
+      IMAGE_NAME: groundcontrol
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+
+      - name: Build Docker image
+        run: docker build -f Dockerfile -t $IMAGE_NAME .
+
+      - name: Log in to registry
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+
+      # Example from here: https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions#upgrading-a-workflow-that-accesses-ghcrio
+      - name: Push Docker image to GitHub Container Registry
+        run: |
+          # Initialize $IMAGE_ID, changing uppercase to lowercase.
+          IMAGE_ID=ghcr.io/${{ github.repository_owner }}/$IMAGE_NAME
+          IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+
+          # Initialize $VERSION from the GitHub ref; if the ref is a tag
+          # then strip off the "v" (version number) prefix.
+          VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
+          [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
+
+          # Convert `main` (branch) to `latest` (tag)
+          [ "$VERSION" == "main" ] && VERSION=latest
+
+          # Tag and push the image.
+          echo IMAGE_ID=$IMAGE_ID
+          echo VERSION=$VERSION
+          docker tag $IMAGE_NAME $IMAGE_ID:$VERSION
+          docker push $IMAGE_ID:$VERSION
