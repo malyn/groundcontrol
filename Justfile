@@ -20,3 +20,10 @@ tree:
 # Auto-build and run tests
 watchtest:
     cargo watch -x "nextest run --all-features"
+
+# Preflight checklist. Does everything that could fail on the build machine
+preflight:
+    cargo fmt --all -- --check
+    cargo clippy --all --all-features -- --deny warnings
+    cargo deny check
+    cargo nextest run --all-features
