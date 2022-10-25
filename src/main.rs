@@ -67,8 +67,9 @@ async fn main() -> anyhow::Result<()> {
     // Read and parse the config file.
     let config_file = tokio::fs::read_to_string(cli.config_file)
         .await
-        .expect("Unable to read config file");
-    let config: Config = toml::from_str(&config_file).expect("Error parsing config file");
+        .with_context(|| "Unable to read config file")?;
+    let config: Config =
+        toml::from_str(&config_file).with_context(|| "Error parsing config file")?;
 
     // We're done if this was only a config file check.
     if cli.check {
@@ -98,7 +99,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Run the Ground Control specification.
-    groundcontrol::run(config, shutdown_receiver)
+    groundcontrol::run(config.processes, shutdown_receiver)
         .await
         .with_context(|| "Ground Control did not shut down cleanly")?;
 
