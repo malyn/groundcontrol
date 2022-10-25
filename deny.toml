@@ -11,8 +11,9 @@ ignore = []
 unlicensed = "deny"
 copyleft = "deny"
 allow = [
-    "MIT",
     "Apache-2.0",
+    "BSD-3-Clause",
+    "MIT",
 ]
 default = "deny"
 
