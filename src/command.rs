@@ -12,7 +12,7 @@ use crate::config::CommandConfig;
 
 /// Exit status returned by a command.
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
-pub enum ExitStatus {
+pub(crate) enum ExitStatus {
     /// Command exited with the given exit code.
     Exited(i32),
 
@@ -22,14 +22,14 @@ pub enum ExitStatus {
 
 /// Control handle for a Command, used to send signals to the command.
 #[derive(Debug)]
-pub struct CommandControl {
+pub(crate) struct CommandControl {
     name: String,
     pid: Pid,
 }
 
 impl CommandControl {
     /// Sends a signal to the process.
-    pub fn kill(&self, signal: nix::sys::signal::Signal) -> anyhow::Result<()> {
+    pub(crate) fn kill(&self, signal: nix::sys::signal::Signal) -> anyhow::Result<()> {
         nix::sys::signal::kill(self.pid, signal)
             .with_context(|| format!("Error sending {} signal to {}", signal, self.name))?;
         Ok(())
@@ -39,13 +39,13 @@ impl CommandControl {
 /// Monitoring handle for a Command, used to wait for the Command to
 /// exit.
 #[derive(Debug)]
-pub struct CommandMonitor {
+pub(crate) struct CommandMonitor {
     monitor: oneshot::Receiver<ExitStatus>,
 }
 
 impl CommandMonitor {
     /// Waits for the command to exit and returns the exit status.
-    pub async fn wait(self) -> ExitStatus {
+    pub(crate) async fn wait(self) -> ExitStatus {
         self.monitor
             .await
             .expect("Command Monitor sender dropped before sending a result.")
@@ -53,7 +53,10 @@ impl CommandMonitor {
 }
 
 /// Runs the command and returns the control and monitor handles.
-pub fn run(name: &str, config: &CommandConfig) -> anyhow::Result<(CommandControl, CommandMonitor)> {
+pub(crate) fn run(
+    name: &str,
+    config: &CommandConfig,
+) -> anyhow::Result<(CommandControl, CommandMonitor)> {
     tracing::debug!(%name, ?config, "Running command");
 
     // Initialize the command.

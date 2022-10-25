@@ -99,9 +99,5 @@ async fn main() -> anyhow::Result<()> {
     });
 
     // Run the Ground Control specification.
-    groundcontrol::run(config.processes, shutdown_receiver)
-        .await
-        .with_context(|| "Ground Control did not shut down cleanly")?;
-
-    Ok(())
+    groundcontrol::run(config, shutdown_receiver).await
 }

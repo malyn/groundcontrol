@@ -11,7 +11,7 @@ use crate::{
 
 /// Process being managed by Ground Control.
 #[derive(Debug)]
-pub struct Process {
+pub(crate) struct Process {
     config: ProcessConfig,
     handle: ProcessHandle,
 }

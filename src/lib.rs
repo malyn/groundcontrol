@@ -14,16 +14,27 @@
     clippy::unwrap_used
 )]
 
+use anyhow::Context;
 use async_trait::async_trait;
+use config::Config;
 use tokio::sync::mpsc;
 
-pub mod command;
+mod command;
 pub mod config;
-pub mod process;
+mod process;
+
+/// Runs a Ground Control specification, returning only when all of the
+/// processes have stopped (either because one process triggered a
+/// shutdown, or because the `shutdown` signal was triggered).
+pub async fn run(config: Config, shutdown: mpsc::UnboundedReceiver<()>) -> anyhow::Result<()> {
+    run_processes(config.processes, shutdown)
+        .await
+        .with_context(|| "Ground Control did not stop cleanly")
+}
 
 /// Errors generated when starting processes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum StartProcessError {
+enum StartProcessError {
     /// Pre-run command failed.
     /// TODO: Rename this to something that indicates that we couldn't even start the process (bad path name or not executable or something?).
     #[error("pre-run command failed")]
@@ -43,9 +54,9 @@ pub enum StartProcessError {
 }
 
 /// Starts processes.
-#[cfg_attr(feature = "_mocks", mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait StartProcess<MP>: Send + Sync
+trait StartProcess<MP>: Send + Sync
 where
     MP: ManageProcess,
 {
@@ -58,7 +69,7 @@ where
 
 /// Errors generated when stopping processes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum StopProcessError {
+enum StopProcessError {
     /// Stop command failed.
     #[error("stop command failed")]
     StopFailed,
@@ -77,20 +88,17 @@ pub enum StopProcessError {
 }
 
 /// Manages started processes.
-#[cfg_attr(feature = "_mocks", mockall::automock)]
+#[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait ManageProcess: Send + Sync {
+trait ManageProcess: Send + Sync {
     /// Stops the process: executes the `stop` command/signal if this is
     /// a daemon process; waits for the process to exit; runs the `post`
     /// command (if present).
     async fn stop_process(self) -> Result<(), StopProcessError>;
 }
 
-/// Runs a Ground Control specification, returning only when all of the
-/// processes have stopped (either because one process triggered a
-/// shutdown, or because the provide shutdown signal was triggered).
-pub async fn run<SP, MP>(
-    spec: Vec<SP>,
+async fn run_processes<SP, MP>(
+    processes: Vec<SP>,
     mut shutdown: mpsc::UnboundedReceiver<()>,
 ) -> Result<(), StartProcessError>
 where
@@ -105,8 +113,8 @@ where
 
     // Start every process in the order they were found in the config
     // file.
-    let mut running: Vec<MP> = Vec::with_capacity(spec.len());
-    for sp in spec.into_iter() {
+    let mut running: Vec<MP> = Vec::with_capacity(processes.len());
+    for sp in processes.into_iter() {
         let process = match sp.start_process(shutdown_sender.clone()).await {
             Ok(process) => process,
             Err(err) => {
@@ -183,4 +191,103 @@ where
     tracing::info!("All processes have exited.");
 
     Ok(())
+}
+
+#[allow(clippy::unwrap_used)]
+#[cfg(test)]
+mod test {
+    use std::sync::{Arc, Mutex};
+
+    use mockall::Sequence;
+
+    use super::*;
+
+    /// Verifies that a failed `pre` execution aborts all subsequent
+    /// command executions.
+    #[tokio::test]
+    async fn failed_pre_aborts_startup() {
+        // Create three mock processes: the first is a daemon process
+        // will be started and stopped, the second is a one-shot process
+        // that fails to start, the third is never started.
+        let mut seq = Sequence::new();
+
+        let mut process_a: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+        process_a
+            .expect_start_process()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(|_| {
+                // We expect this, but do not need to check for it
+                // (hence no `once()`); that validation happens in a
+                // different test.
+                let mut process_a_manager = MockManageProcess::new();
+                process_a_manager.expect_stop_process().return_const(Ok(()));
+                Ok(process_a_manager)
+            });
+
+        let mut process_b: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+        process_b
+            .expect_start_process()
+            .once()
+            .in_sequence(&mut seq)
+            .return_once(|_| Err(StartProcessError::PreRunFailed));
+
+        let process_c: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+
+        // Run the specification; only `a-pre` should run.
+        let spec = vec![process_a, process_b, process_c];
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let result = run_processes(spec, rx).await;
+        assert_eq!(Err(StartProcessError::PreRunFailed), result);
+    }
+
+    /// Verifies that a failed `pre` execution shuts down all
+    /// previously-started long-running processes.
+    #[tokio::test]
+    async fn failed_pre_shuts_down_earlier_processes() {
+        // Create three mock processes: the first is a daemon process
+        // will be started and stopped, the second is a one-shot process
+        // that fails to start, the third is never started.
+        let mut seq = Sequence::new();
+
+        // This ProcessManager is *last* in the sequence, but is
+        // returned by the *first* StartProcess trait in the sequence.
+        // We need to pass (a clone) of the manager into the
+        // StartProcess closure, but can't initialize the manager until
+        // we get to the proper place in the expectation sequence. The
+        // solution is to wrap the manager in an Arc-Mutex-Option.
+        let process_a_manager: Arc<Mutex<Option<MockManageProcess>>> = Default::default();
+
+        let pam = process_a_manager.clone();
+        let mut process_a: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+        process_a
+            .expect_start_process()
+            .once()
+            .in_sequence(&mut seq)
+            .returning(move |_| Ok(pam.lock().unwrap().take().unwrap()));
+
+        let mut process_b: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+        process_b
+            .expect_start_process()
+            .once()
+            .in_sequence(&mut seq)
+            .return_once(|_| Err(StartProcessError::PreRunFailed));
+
+        let mut pam = MockManageProcess::new();
+        pam.expect_stop_process()
+            .once()
+            .in_sequence(&mut seq)
+            .return_const(Ok(()));
+        *process_a_manager.lock().unwrap() = Some(pam);
+
+        let process_c: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+
+        // Run the specification.
+        let spec = vec![process_a, process_b, process_c];
+        let (_tx, rx) = mpsc::unbounded_channel();
+        let result = run_processes(spec, rx).await;
+        assert_eq!(Err(StartProcessError::PreRunFailed), result);
+    }
+
+    // TODO: Same tests as above, but this time with `run` instead of `pre`.
 }
