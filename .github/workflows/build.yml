@@ -25,11 +25,11 @@ jobs:
     strategy:
       matrix:
         rust:
-          - 1.60.0
+          - 1.64.0
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Install Rust toolchain
         uses: actions-rs/toolchain@v1
@@ -37,6 +37,18 @@ jobs:
           toolchain: ${{ matrix.rust }}
           override: true
           components: clippy, rustfmt
+
+      - name: Set up cache
+        uses: actions/cache@v3
+        continue-on-error: false
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
 
       - name: Install tools
         uses: taiki-e/install-action@v1
@@ -75,7 +87,7 @@ jobs:
 
     steps:
       - name: Checkout sources
-        uses: actions/checkout@v2
+        uses: actions/checkout@v3
 
       - name: Build Docker image
         run: docker build -f Dockerfile -t $IMAGE_NAME .
