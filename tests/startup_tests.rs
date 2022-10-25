@@ -2,6 +2,8 @@
 //! "startup" is defined as the process of getting all long-running
 //! processes into their started state).
 
+use std::sync::{Arc, Mutex};
+
 use groundcontrol::{
     config::{CommandConfig, Config, ProcessConfig},
     MockManageProcess, MockStartProcess, StartProcessError,
@@ -92,6 +94,54 @@ async fn failed_pre_aborts_startup() {
     let process_c: MockStartProcess<MockManageProcess> = MockStartProcess::new();
 
     // Run the specification; only `a-pre` should run.
+    let spec = vec![process_a, process_b, process_c];
+    let (_tx, rx) = mpsc::unbounded_channel();
+    let result = groundcontrol::run(spec, rx).await;
+    assert_eq!(Err(StartProcessError::PreRunFailed), result);
+}
+
+/// Verifies that a failed `pre` execution shuts down all
+/// previously-started long-running processes.
+#[tokio::test]
+async fn failed_pre_shuts_down_earlier_processes() {
+    // Create three mock processes: the first is a daemon process will
+    // be started and stopped, the second is a one-shot process that
+    // fails to start, the third is never started.
+    let mut seq = Sequence::new();
+
+    // This ProcessManager is *last* in the sequence, but is returned by
+    // the *first* StartProcess trait in the sequence. We need to pass
+    // (a clone) of the manager into the StartProcess closure, but can't
+    // initialize the manager until we get to the proper place in the
+    // expectation sequence. The solution is to wrap the manager in an
+    // Arc-Mutex-Option.
+    let process_a_manager: Arc<Mutex<Option<MockManageProcess>>> = Default::default();
+
+    let pam = process_a_manager.clone();
+    let mut process_a: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+    process_a
+        .expect_start_process()
+        .once()
+        .in_sequence(&mut seq)
+        .returning(move |_| Ok(pam.lock().unwrap().take().unwrap()));
+
+    let mut process_b: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+    process_b
+        .expect_start_process()
+        .once()
+        .in_sequence(&mut seq)
+        .return_once(|_| Err(StartProcessError::PreRunFailed));
+
+    let mut pam = MockManageProcess::new();
+    pam.expect_stop_process()
+        .once()
+        .in_sequence(&mut seq)
+        .return_const(Ok(()));
+    *process_a_manager.lock().unwrap() = Some(pam);
+
+    let process_c: MockStartProcess<MockManageProcess> = MockStartProcess::new();
+
+    // Run the specification.
     let spec = vec![process_a, process_b, process_c];
     let (_tx, rx) = mpsc::unbounded_channel();
     let result = groundcontrol::run(spec, rx).await;

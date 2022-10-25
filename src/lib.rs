@@ -112,11 +112,31 @@ where
             Err(err) => {
                 tracing::error!(?err, "Failed to start process; aborting startup procedure");
 
-                // TODO: Need to start shutting down if this fails.
-                // Right now we just exit, but we may have already
-                // started processes and we need to shut down those
-                // processes (or they will block Ground Control from
-                // exiting and thus the container from shutting down).
+                // Stop all of the daemon processes that have already
+                // started (otherwise they will block Ground Control
+                // from exiting and thus the container from shutting
+                // down).
+                while let Some(process) = running.pop() {
+                    if let Err(err) = process.stop_process().await {
+                        tracing::error!(?err, "Error stopping process after aborted startup");
+                    }
+                }
+
+                // Manually drop `shutdown_sender` here, and then drain
+                // all of the receiver signals. If we let the channel
+                // auto-drop (which happens at the entrance to this
+                // match arm), then stopping the already-started
+                // processes will generate a bunch of spurious errors,
+                // since they will be unable to send their shutdown
+                // signals. That also generates out-of-order log lines,
+                // since the warnings about those signals may not show
+                // up until *after* Ground Control itself thinks it has
+                // stopped.
+                drop(shutdown_sender);
+                while shutdown_receiver.recv().await.is_some() {}
+
+                // Return the original error, now that everything has
+                // been stopped.
                 return Err(err);
             }
         };
