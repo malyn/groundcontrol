@@ -78,7 +78,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Create the external shutdown signal (used to shut down Ground
     // Control on UNIX signals).
-    let (shutdown_sender, shutdown_receiver) = mpsc::unbounded_channel();
+    let (shutdown_sender, mut shutdown_receiver) = mpsc::unbounded_channel();
 
     let sigint_shutdown_sender = shutdown_sender.clone();
     tokio::spawn(async move {
@@ -98,6 +98,25 @@ async fn main() -> anyhow::Result<()> {
         let _ = sigterm_shutdown_sender.send(());
     });
 
-    // Run the Ground Control specification.
-    groundcontrol::run(config, shutdown_receiver).await
+    // Run the Ground Control specification, *unless* we are in
+    // break-glass mode, in which case we freeze startup and just wait
+    // for the shutdown signal. (this gives the admin a chance to SSH
+    // into a machine that is in a startup-crash loop, perhaps due to an
+    // issue on an attached, persistent storage volume)
+    if std::env::var_os("BREAK_GLASS").is_none() {
+        groundcontrol::run(config, shutdown_receiver).await
+    } else {
+        tracing::info!("BREAK GLASS MODE: no processes will be started");
+
+        shutdown_receiver
+            .recv()
+            .await
+            .expect("All shutdown senders closed without sending a shutdown signal.");
+
+        tracing::info!(
+            "Shutdown signal triggered (make sure to clear the `BREAK_GLASS` environment variable)"
+        );
+
+        Ok(())
+    }
 }
