@@ -81,8 +81,8 @@ pub(crate) fn run(
 
     for key in &config.env_vars {
         command.env(
-            &key,
-            env::var(&key).with_context(|| "Missing environment variable")?,
+            key,
+            env::var(key).with_context(|| "Missing environment variable")?,
         );
     }
 

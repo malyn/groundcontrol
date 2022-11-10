@@ -195,6 +195,7 @@ struct DetailedCommandLine {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use serde::Deserialize;
 
