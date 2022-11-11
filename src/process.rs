@@ -101,7 +101,13 @@ impl ManageProcess for Process {
         // Stop the process (which is only required for daemon
         // processes; one-shot processes never "started").
         match self.handle {
-            ProcessHandle::Daemon(control, daemon_receiver) => {
+            ProcessHandle::Daemon(control, mut daemon_receiver) => {
+                // Has the daemon already shut down? If so, we do not
+                // need to stop it (we just need to run the `post`
+                // command, if any).
+                if daemon_receiver.try_recv().is_ok() {
+                    tracing::debug!(process_name = %self.config.name, "Daemon already exited; no need to `stop` it.");
+                } else {
                 // Stop the daemon.
                 match self.config.stop {
                     StopMechanism::Signal(signal) => {
@@ -110,7 +116,8 @@ impl ManageProcess for Process {
                         }
                     }
                     StopMechanism::Command(command) => {
-                        let (_pid, exit_receiver) = command::run(&self.config.name, &command)
+                            let (_pid, exit_receiver) =
+                                command::run(&self.config.name, &command)
                             .map_err(|_| StopProcessError::StopFailed)?;
 
                         match exit_receiver.wait().await {
@@ -133,6 +140,7 @@ impl ManageProcess for Process {
                 if daemon_receiver.await.is_err() {
                     tracing::error!("Daemon sender dropped before delivering exit signal.");
                 }
+            }
             }
             ProcessHandle::OneShot => {}
         };

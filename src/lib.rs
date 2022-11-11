@@ -195,16 +195,11 @@ where
 
     // Either one process exited or we received a stop signal; stop all
     // of the processes in the *reverse* order in which they were
-    // started.
+    // started. Note that "stop" means both `stop` (*if* the process is
+    // a daemon process that is still running) and `post`.
     tracing::info!("Completion signal triggered; shutting down all processes");
 
     while let Some(process) = running.pop() {
-        // TODO: We could do some sort of thing here where we check to
-        // see if this is the process that triggered the shutdown and,
-        // *still* `stop` it (since we may need to run `post`), but not
-        // actually kill it, since it has already stopped. Basically,
-        // just some extra tracking to avoid the WARN log that happens
-        // when trying to kill a process that has already exited.
         if let Err(err) = process.stop_process().await {
             tracing::error!(?err, "Error stopping process");
         }
