@@ -13,7 +13,7 @@ sleep 5 &
 SLEEP_PID=$!
 
 # Trap the SIGTERM shutdown signal (which kills the sleep process).
-function do_shutdown() {
+do_shutdown() {
     echo ${DAEMON_NAME}:shutdown-requested >> ${RESULT_PATH}
     kill ${SLEEP_PID}
 }
