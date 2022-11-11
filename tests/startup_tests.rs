@@ -2,27 +2,42 @@
 //! "startup" is defined as the process of getting all long-running
 //! processes into their started state).
 
+use std::{future::Future, time::Duration};
+
 use groundcontrol::config::Config;
+use nix::unistd::Pid;
 use tempfile::TempDir;
-use tokio::sync::mpsc;
+use tokio::sync::{
+    mpsc::{self, UnboundedSender},
+    oneshot,
+};
 
 /// Prepares the test directory and test "daemon" script, performs
 /// template replacement in the provided configuration, runs Ground
-/// Control, waits for it to stop, and then collects the contents of the
-/// result file.
+/// Control, and returns the shutdown handle and temp directory, the
+/// latter which can be used to detect started daemons, and to stop
+/// those same daemons.
 ///
 /// The following template variables will be replaced in the `config`
 /// string:
 ///
 /// - `{test-daemon.sh}` is replaced with the path to the
 ///   `test-daemon.sh` script that can be used to test long-running
-///   daemons. The script takes one argument: the name of the daemon,
-///   which will be output to the results file when the daemon starts.
+///   daemons. The script takes three arguments: the name of the daemon,
+///   which will be output to the results file when the daemon starts,
+///   stops, or is asked to shutdown; the path to the results file; the
+///   path to the directory where the daemon's PID should be stored.
 /// - `{result_path}` is replaced with the full path to the result file
 ///   that will be read at the completion of the test. This can be used
 ///   to verify that each process was started (and in the case of the
 ///   daemon, the reason for its exit).
-async fn run(config: &str) -> (anyhow::Result<()>, String) {
+async fn start(
+    config: &str,
+) -> (
+    impl Future<Output = anyhow::Result<()>>,
+    UnboundedSender<()>,
+    TempDir,
+) {
     // Create a temp directory into which we can write output from the
     // commands, as a simple way of verifying that the commands are in
     // fact run in the proper order.
@@ -36,37 +51,37 @@ async fn run(config: &str) -> (anyhow::Result<()>, String) {
         .to_str()
         .unwrap()
         .to_string();
-    tokio::fs::write(
-        &test_daemon_path,
-        format!(
-        r##"
-            #!/usr/bin/env sh
-            set -Eeuo pipefail
+    tokio::fs::write(&test_daemon_path, include_bytes!("test-daemon.sh"))
+        .await
+        .unwrap();
 
-            DAEMON_NAME=$1
-
-            echo $DAEMON_NAME >> {result_path}
-
-            exec sleep 5
-        "##
-        )
-        .as_bytes(),
-    )
-    .await
-    .unwrap();
-
-    // Parse the test configuration, replace `result_path` and
-    // `test-daemon` in the config.
+    // Parse the test configuration, replacing our template variables
+    // before passing the config to the parser.
     let config: Config = toml::from_str(
         &config
             .replace("{result_path}", &result_path)
+            .replace("{temp_path}", dir.path().to_str().unwrap())
             .replace("{test-daemon.sh}", &test_daemon_path),
     )
     .unwrap();
 
-    // Run the specification and collect the results.
-    let (_tx, rx) = mpsc::unbounded_channel();
-    let result = groundcontrol::run(config, rx).await;
+    // Start Ground Control and return the handles.
+    let (tx, rx) = mpsc::unbounded_channel();
+    let gc = groundcontrol::run(config, rx);
+    (gc, tx, dir)
+}
+
+/// Waits for Ground Control to stop, then collects the contents of the
+/// result file.
+async fn stop(
+    gc: impl Future<Output = anyhow::Result<()>>,
+    dir: TempDir,
+) -> (anyhow::Result<()>, String) {
+    // Wait for Ground Control to stop.
+    let result = gc.await;
+
+    // Collect the results.
+    let result_path = dir.path().join("results.txt").to_str().unwrap().to_string();
     let result_file = match tokio::fs::read_to_string(result_path).await {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -77,37 +92,91 @@ async fn run(config: &str) -> (anyhow::Result<()>, String) {
     (result, result_file)
 }
 
-/// Basic test: execute a single one-shot process.
-#[test_log::test(tokio::test)]
-async fn one_shot() {
-    let config = r##"
-        [[processes]]
-        name = "a"
-        pre = [ "/bin/sh", "-c", "echo a-pre >> {result_path}" ]
+/// Spawns a task that will wait for the daemon with the given name to
+/// start, then returns the PID of the daemon.
+fn spawn_daemon_waiter(dir: &TempDir, daemon_name: &str) -> oneshot::Receiver<Pid> {
+    let (tx, rx) = oneshot::channel();
+    let daemon_pid_path = dir
+        .path()
+        .join(format!("{daemon_name}.pid"))
+        .to_str()
+        .unwrap()
+        .to_string();
 
-        [[processes]]
-        name = "shutdown"
-        run = [ "/bin/sh", "{test-daemon.sh}", "shutdown" ]
-        "##;
+    tokio::task::spawn(async move {
+        loop {
+            match tokio::fs::read_to_string(&daemon_pid_path).await {
+                Ok(text) => {
+                    let pid = Pid::from_raw(text.trim().parse::<i32>().unwrap());
+                    tx.send(pid).unwrap();
+                    break;
+                }
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
+                }
+                Err(err) => panic!("Unable to read PID file: {err}"),
+            };
+        }
+    });
 
-    let (result, output) = run(config).await;
-    assert!(result.is_ok());
-    assert_eq!("a-pre\nshutdown\n", output);
+    rx
 }
 
-/// Basic daemon test: starts a single daemon and waits for it shut down
-/// on its own.
+/// Basic daemon test: starts a single "daemon" (actually just a script
+/// that exits immediately) and waits for it shut down on its own
+/// (which, again, happens immediately).
+///
+/// This demonstrates that a "daemon" is really just a process that
+/// Ground Control does *not* wait to exit before starting other
+/// processes. In other words, all daemon processes (`run` commands) are
+/// started in sequence and we only monitor their exit *after* they have
+/// all started.
+///
+/// This is in contrast with `pre` and `post` commands which are
+/// one-shot commands that block startup/shutdown until they complete.
 #[test_log::test(tokio::test)]
 async fn single_daemon_success() {
     let config = r##"
         [[processes]]
         name = "daemon"
-        run = [ "/bin/sh", "{test-daemon.sh}", "daemon" ]
+        run = [ "/bin/sh", "-c", "echo daemon >> {result_path}" ]
         "##;
 
-    let (result, output) = run(config).await;
+    let (gc, _tx, dir) = start(config).await;
+    let (result, output) = stop(gc, dir).await;
     assert!(result.is_ok());
     assert_eq!("daemon\n", output);
+}
+
+/// Basic daemon test: starts a real daemon, waits for it to start, then
+/// requests that Ground Control perform a controlled shutdown.
+#[test_log::test(tokio::test)]
+async fn single_daemon_graceful_shutdown() {
+    let config = r##"
+        [[processes]]
+        name = "daemon"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon", "{result_path}", "{temp_path}" ]
+        "##;
+
+    // Start Ground Control, wait for the daemon to finish starting, ask
+    // Ground Control to shutdown, then wait for Ground Control to stop.
+    let (gc, tx, dir) = start(config).await;
+
+    let daemon_waiter = spawn_daemon_waiter(&dir, "daemon");
+    tokio::task::spawn(async move {
+        daemon_waiter.await.unwrap();
+        tx.send(()).unwrap();
+    });
+
+    let (result, output) = stop(gc, dir).await;
+
+    // This should result in a controlled shutdown.
+    assert!(result.is_ok());
+    assert_eq!(
+        "daemon:started\ndaemon:shutdown-requested\ndaemon:stopped\n",
+        output
+    );
 }
 
 /// Verifies that a failed `pre` execution aborts all subsequent command
@@ -133,7 +202,8 @@ async fn failed_pre_aborts_startup() {
         post = [ "/bin/sh", "-c", "echo c-post >> {result_path}" ]
         "##;
 
-    let (result, output) = run(config).await;
+    let (gc, _tx, dir) = start(config).await;
+    let (result, output) = stop(gc, dir).await;
     assert!(result.is_err());
     assert_eq!("a-pre\na-post\n", output);
 }
