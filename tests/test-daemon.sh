@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-set -Eeuo pipefail
+set -Eeuo
 
 DAEMON_NAME=$1
 RESULT_PATH=$2
