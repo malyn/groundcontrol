@@ -6,7 +6,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::{
     command::{self, CommandControl, ExitStatus},
     config::{ProcessConfig, StopMechanism},
-    ManageProcess, StartProcess, StartProcessError, StopProcessError,
+    ManageProcess, ShutdownReason, StartProcess, StartProcessError, StopProcessError,
 };
 
 /// Process being managed by Ground Control.
@@ -26,7 +26,7 @@ enum ProcessHandle {
 impl StartProcess<Process> for ProcessConfig {
     async fn start_process(
         self,
-        process_stopped: mpsc::UnboundedSender<()>,
+        process_stopped: mpsc::UnboundedSender<ShutdownReason>,
     ) -> Result<Process, StartProcessError> {
         tracing::info!(process_name = %self.name, "Starting process");
 
@@ -67,7 +67,12 @@ impl StartProcess<Process> for ProcessConfig {
                     tracing::error!(%process_name, "Daemon receiver dropped before receiving exit signal.");
                 }
 
-                if let Err(err) = process_stopped.send(()) {
+                let shutdown_reason = match exit_status {
+                    ExitStatus::Exited(0) => ShutdownReason::DaemonExited,
+                    ExitStatus::Exited(_) | ExitStatus::Killed => ShutdownReason::DaemonFailed,
+                };
+
+                if let Err(err) = process_stopped.send(shutdown_reason) {
                     tracing::error!(
                         %process_name,
                         ?err,

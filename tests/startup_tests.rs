@@ -34,7 +34,7 @@ use tokio::sync::{
 async fn start(
     config: &str,
 ) -> (
-    impl Future<Output = anyhow::Result<()>>,
+    impl Future<Output = Result<(), groundcontrol::Error>>,
     UnboundedSender<()>,
     TempDir,
 ) {
@@ -74,9 +74,9 @@ async fn start(
 /// Waits for Ground Control to stop, then collects the contents of the
 /// result file.
 async fn stop(
-    gc: impl Future<Output = anyhow::Result<()>>,
+    gc: impl Future<Output = Result<(), groundcontrol::Error>>,
     dir: TempDir,
-) -> (anyhow::Result<()>, String) {
+) -> (Result<(), groundcontrol::Error>, String) {
     // Wait for Ground Control to stop.
     let result = gc.await;
 
@@ -179,6 +179,30 @@ async fn single_daemon_graceful_shutdown() {
     );
 }
 
+/// Basic daemon failure test: starts a single daemon and expects it to
+/// fail during startup (which happens because we do *not* provide any
+/// arguments to the `test-daemon.sh` script).
+///
+/// Note that this is technically a delayed failure that is detected
+/// *after* Ground Control reaches the startup phase; immediate startup
+/// failures -- ones that block the remainder of the startup process --
+/// will be only be triggered if the process cannot even be started: the
+/// binary cannot be found or is not executable, a required environment
+/// variable is missing, etc.
+#[test_log::test(tokio::test)]
+async fn single_daemon_failure() {
+    let config = r##"
+        [[processes]]
+        name = "daemon"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon" ]
+        "##;
+
+    let (gc, _tx, dir) = start(config).await;
+    let (result, output) = stop(gc, dir).await;
+    assert_eq!(Err(groundcontrol::Error::AbnormalShutdown), result);
+    assert_eq!("", output);
+}
+
 /// Verifies that a failed `pre` execution aborts all subsequent command
 /// executions *and* runs stop/post commands for anything that was
 /// started.
@@ -204,6 +228,6 @@ async fn failed_pre_aborts_startup() {
 
     let (gc, _tx, dir) = start(config).await;
     let (result, output) = stop(gc, dir).await;
-    assert!(result.is_err());
+    assert_eq!(Err(groundcontrol::Error::StartupAborted), result);
     assert_eq!("a-pre\na-post\n", output);
 }

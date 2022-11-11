@@ -104,7 +104,7 @@ async fn main() -> anyhow::Result<()> {
     // into a machine that is in a startup-crash loop, perhaps due to an
     // issue on an attached, persistent storage volume)
     if std::env::var_os("BREAK_GLASS").is_none() {
-        groundcontrol::run(config, shutdown_receiver).await
+        groundcontrol::run(config, shutdown_receiver).await?;
     } else {
         tracing::info!("BREAK GLASS MODE: no processes will be started");
 
@@ -116,7 +116,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!(
             "Shutdown signal triggered (make sure to clear the `BREAK_GLASS` environment variable)"
         );
-
-        Ok(())
     }
+
+    Ok(())
 }
