@@ -12,12 +12,22 @@ echo ${DAEMON_NAME}:started >> ${RESULT_PATH}
 sleep 5 &
 SLEEP_PID=$!
 
-# Trap the SIGTERM shutdown signal (which kills the sleep process).
+# Trap the SIGTERM shutdown signal (which logs a shutdown-requested
+# message, kills the sleep process, and then lets the script gracefully
+# exit).
 do_shutdown() {
     echo ${DAEMON_NAME}:shutdown-requested >> ${RESULT_PATH}
     kill ${SLEEP_PID}
 }
 trap 'do_shutdown' TERM
+
+# Trap the SIGINT signal (which kills the sleep process and immediately
+# exits the script; no additional messages).
+do_stop() {
+    kill ${SLEEP_PID}
+    exit 1
+}
+trap 'do_stop' INT
 
 # Write out the PID of the *this* process, which the test code can use
 # to determine that the daemon has started, and to stop the daemon.
