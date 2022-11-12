@@ -14,9 +14,10 @@
     clippy::unwrap_used
 )]
 
-use async_trait::async_trait;
 use config::Config;
 use tokio::sync::mpsc;
+
+use crate::process::Process;
 
 mod command;
 pub mod config;
@@ -34,78 +35,6 @@ pub enum Error {
     AbnormalShutdown,
 }
 
-/// Runs a Ground Control specification, returning only when all of the
-/// processes have stopped (either because one process triggered a
-/// shutdown, or because the `shutdown` signal was triggered).
-pub async fn run(config: Config, shutdown: mpsc::UnboundedReceiver<()>) -> Result<(), Error> {
-    run_processes(config.processes, shutdown).await
-}
-
-/// Errors generated when starting processes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
-enum StartProcessError {
-    /// Pre-run command failed.
-    /// TODO: Rename this to something that indicates that we couldn't even start the process (bad path name or not executable or something?).
-    #[error("pre-run command failed")]
-    PreRunFailed,
-
-    /// Pre-run command aborted with a non-zero exit code.
-    #[error("pre-run command aborted with exit code: {0}")]
-    PreRunAborted(i32),
-
-    /// Pre-run command was killed before it could exit.
-    #[error("pre-run commadn killed before it could exit")]
-    PreRunKilled,
-
-    /// Run command failed.
-    #[error("run command failed")]
-    RunFailed,
-}
-
-/// Starts processes.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait]
-trait StartProcess<MP>: Send + Sync
-where
-    MP: ManageProcess,
-{
-    /// Starts the process and returns a handle to the process.
-    async fn start_process(
-        self,
-        process_stopped: mpsc::UnboundedSender<ShutdownReason>,
-    ) -> Result<MP, StartProcessError>;
-}
-
-/// Errors generated when stopping processes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
-enum StopProcessError {
-    /// Stop command failed.
-    #[error("stop command failed")]
-    StopFailed,
-
-    /// Process aborted with a non-zero exit code.
-    #[error("process aborted with exit code: {0}")]
-    ProcessAborted(i32),
-
-    /// Process was killed before it could be stopped.
-    #[error("process killed before it could be stopped")]
-    ProcessKilled,
-
-    /// Post-run command failed.
-    #[error("post-run command failed")]
-    PostRunFailed,
-}
-
-/// Manages started processes.
-#[cfg_attr(test, mockall::automock)]
-#[async_trait]
-trait ManageProcess: Send + Sync {
-    /// Stops the process: executes the `stop` command/signal if this is
-    /// a daemon process; waits for the process to exit; runs the `post`
-    /// command (if present).
-    async fn stop_process(self) -> Result<(), StopProcessError>;
-}
-
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ShutdownReason {
     /// Graceful shutdown was triggered by an external signal.
@@ -118,14 +47,10 @@ enum ShutdownReason {
     DaemonFailed,
 }
 
-async fn run_processes<SP, MP>(
-    processes: Vec<SP>,
-    mut shutdown: mpsc::UnboundedReceiver<()>,
-) -> Result<(), Error>
-where
-    SP: StartProcess<MP>,
-    MP: ManageProcess,
-{
+/// Runs a Ground Control specification, returning only when all of the
+/// processes have stopped (either because one process triggered a
+/// shutdown, or because the `shutdown` signal was triggered).
+pub async fn run(config: Config, mut shutdown: mpsc::UnboundedReceiver<()>) -> Result<(), Error> {
     // Create the shutdown channel, which will be used to initiate the
     // shutdown process, regardless of if this is a graceful shutdown
     // triggered by a shutdown signal, a clean shutdown of a daemon
@@ -135,9 +60,9 @@ where
 
     // Start every process in the order they were found in the config
     // file.
-    let mut running: Vec<MP> = Vec::with_capacity(processes.len());
-    for sp in processes.into_iter() {
-        let process = match sp.start_process(shutdown_sender.clone()).await {
+    let mut running: Vec<Process> = Vec::with_capacity(config.processes.len());
+    for process_config in config.processes.into_iter() {
+        let process = match process::start_process(process_config, shutdown_sender.clone()).await {
             Ok(process) => process,
             Err(err) => {
                 tracing::error!(?err, "Failed to start process; aborting startup procedure");
@@ -207,6 +132,9 @@ where
 
     tracing::info!("All processes have exited.");
 
+    // Clean shutdowns (a daemon that exited with a non-error exit code,
+    // or a graceful shutdown request) are success, abnormal shutdowns
+    // are errors.
     match shutdown_reason {
         ShutdownReason::GracefulShutdown | ShutdownReason::DaemonExited => Ok(()),
         ShutdownReason::DaemonFailed => Err(Error::AbnormalShutdown),
