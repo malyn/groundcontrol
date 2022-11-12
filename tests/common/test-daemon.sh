@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-set -Eeuo
+set -Eeuo >/dev/null
 
 DAEMON_NAME=$1
 RESULT_PATH=$2

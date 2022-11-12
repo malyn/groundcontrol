@@ -19,16 +19,29 @@ use tokio::sync::{
 /// The following template variables will be replaced in the `config`
 /// string:
 ///
+/// - `{result_path}` is replaced with the full path to the result file
+///   that will be read at the completion of the test. This can be used
+///   to verify that each process was started (and in the case of the
+///   daemon, the reason for its exit).
+/// - `{temp_path}` is replaced with the path to the test-specific
+///   temporary directory (which can be used to store daemon PID files,
+///   for example).
 /// - `{test-daemon.sh}` is replaced with the path to the
 ///   `test-daemon.sh` script that can be used to test long-running
 ///   daemons. The script takes three arguments: the name of the daemon,
 ///   which will be output to the results file when the daemon starts,
 ///   stops, or is asked to shutdown; the path to the results file; the
 ///   path to the directory where the daemon's PID should be stored.
-/// - `{result_path}` is replaced with the full path to the result file
-///   that will be read at the completion of the test. This can be used
-///   to verify that each process was started (and in the case of the
-///   daemon, the reason for its exit).
+/// - `{wait-daemon-start.sh}` is replaced with the path to the
+///   `wait-daemon-start.sh` script that can be used to wait for a
+///   long-running daemon to finish starting and enter its sleep loop.
+///   The script takes two arguments: the name of the daemon and the
+///   path to the directory where the daemon's PID is stored. This
+///   script allows tests to ensure that a daemon has started *and
+///   output its startup text to the results file* before proceeding to
+///   the next process. (without that, test results would be
+///   inconsistent depending on which process got to run first, and for
+///   how long).
 pub async fn start(
     config: &str,
 ) -> (
@@ -42,7 +55,7 @@ pub async fn start(
     let dir = TempDir::new().unwrap();
     let result_path = dir.path().join("results.txt").to_str().unwrap().to_string();
 
-    // Write the "test-daemon.sh" script into the temp directory.
+    // Write the test scripts into the temp directory.
     let test_daemon_path = dir
         .path()
         .join("test-daemon.sh")
@@ -53,13 +66,27 @@ pub async fn start(
         .await
         .unwrap();
 
+    let wait_daemon_start_path = dir
+        .path()
+        .join("wait-daemon-start.sh")
+        .to_str()
+        .unwrap()
+        .to_string();
+    tokio::fs::write(
+        &wait_daemon_start_path,
+        include_bytes!("wait-daemon-start.sh"),
+    )
+    .await
+    .unwrap();
+
     // Parse the test configuration, replacing our template variables
     // before passing the config to the parser.
     let config: Config = toml::from_str(
         &config
             .replace("{result_path}", &result_path)
             .replace("{temp_path}", dir.path().to_str().unwrap())
-            .replace("{test-daemon.sh}", &test_daemon_path),
+            .replace("{test-daemon.sh}", &test_daemon_path)
+            .replace("{wait-daemon-start.sh}", &wait_daemon_start_path),
     )
     .unwrap();
 
