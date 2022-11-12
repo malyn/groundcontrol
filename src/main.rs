@@ -14,8 +14,8 @@
     clippy::unwrap_used
 )]
 
-use anyhow::Context;
 use clap::Parser;
+use color_eyre::eyre::{self, WrapErr};
 use groundcontrol::config::Config;
 use tokio::{
     signal::unix::{signal, SignalKind},
@@ -34,7 +34,10 @@ struct Cli {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() -> eyre::Result<()> {
+    // Install color-eyre hooks.
+    color_eyre::install()?;
+
     // Crash the process on a panic anywhere (including in a background
     // Tokio task, since we want panic to mean "something is very wrong;
     // stop everything").
@@ -67,9 +70,8 @@ async fn main() -> anyhow::Result<()> {
     // Read and parse the config file.
     let config_file = tokio::fs::read_to_string(cli.config_file)
         .await
-        .with_context(|| "Unable to read config file")?;
-    let config: Config =
-        toml::from_str(&config_file).with_context(|| "Error parsing config file")?;
+        .wrap_err("Failed to read config file")?;
+    let config: Config = toml::from_str(&config_file).wrap_err("Failed to parse config file")?;
 
     // We're done if this was only a config file check.
     if cli.check {

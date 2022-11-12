@@ -121,3 +121,16 @@ pub fn spawn_daemon_waiter(dir: &TempDir, daemon_name: &str) -> oneshot::Receive
 
     rx
 }
+
+/// Asserts that the Ground Control result is the `StartupAborted` error
+/// and that the error report matches the expected text.
+#[allow(dead_code)]
+pub fn assert_startup_aborted(expected: &str, result: Result<(), groundcontrol::Error>) {
+    match result {
+        Err(groundcontrol::Error::StartupAborted(report)) => {
+            let report_text: String = report.chain().map(|r| format!("{r}\n")).collect();
+            assert_eq!(expected, report_text,);
+        }
+        Ok(_) | Err(_) => panic!("Expected StartupAborted error."),
+    };
+}

@@ -82,6 +82,9 @@ async fn single_daemon_failure() {
 
     let (gc, _tx, dir) = start(config).await;
     let (result, output) = stop(gc, dir).await;
-    assert_eq!(Err(groundcontrol::Error::AbnormalShutdown), result);
+    assert!(matches!(
+        result,
+        Err(groundcontrol::Error::AbnormalShutdown)
+    ));
     assert_eq!("", output);
 }

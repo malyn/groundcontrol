@@ -2,7 +2,7 @@
 
 use std::{env, process::Stdio};
 
-use anyhow::Context;
+use color_eyre::eyre::{self, eyre, WrapErr};
 use command_group::{AsyncCommandGroup, AsyncGroupChild};
 use nix::unistd::Pid;
 use regex::{Captures, Regex};
@@ -29,9 +29,10 @@ pub(crate) struct CommandControl {
 
 impl CommandControl {
     /// Sends a signal to the process.
-    pub(crate) fn kill(&self, signal: nix::sys::signal::Signal) -> anyhow::Result<()> {
-        nix::sys::signal::kill(self.pid, signal)
-            .with_context(|| format!("Error sending {} signal to {}", signal, self.name))?;
+    pub(crate) fn kill(&self, signal: nix::sys::signal::Signal) -> eyre::Result<()> {
+        nix::sys::signal::kill(self.pid, signal).wrap_err_with(|| {
+            format!("Error sending {signal} signal to process \"{}\"", self.name)
+        })?;
         Ok(())
     }
 }
@@ -56,7 +57,7 @@ impl CommandMonitor {
 pub(crate) fn run(
     name: &str,
     config: &CommandConfig,
-) -> anyhow::Result<(CommandControl, CommandMonitor)> {
+) -> eyre::Result<(CommandControl, CommandMonitor)> {
     tracing::debug!(%name, ?config, "Running command");
 
     // Initialize the command.
@@ -82,13 +83,14 @@ pub(crate) fn run(
     for key in &config.env_vars {
         command.env(
             key,
-            env::var(key).with_context(|| "Missing environment variable")?,
+            env::var(key).wrap_err_with(|| format!("Missing environment variable \"{key}\""))?,
         );
     }
 
     // Set the uid and gid if provided.
     if let Some(username) = &config.user {
-        let user = users::get_user_by_name(username).with_context(|| "Unknown username")?;
+        let user = users::get_user_by_name(username)
+            .ok_or_else(|| eyre!("Unknown username \"{username}\""))?;
         command.uid(user.uid()).gid(user.primary_group_id());
     };
 
@@ -102,12 +104,13 @@ pub(crate) fn run(
     // Run the command.
     let child = command
         .group_spawn()
-        .with_context(|| "Error running command")?;
-    let pid = nix::unistd::Pid::from_raw(
-        child
-            .id()
-            .with_context(|| "Unable to get PID of just-started process")? as i32,
-    );
+        .wrap_err_with(|| format!("Error starting command \"{}\"", config.program))?;
+    let pid = nix::unistd::Pid::from_raw(child.id().ok_or_else(|| {
+        eyre!(
+            "Failed to get PID of just-started command \"{}\"",
+            config.program
+        )
+    })? as i32);
 
     tracing::debug!(%name, %pid, "Command running");
 

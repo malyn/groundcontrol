@@ -8,8 +8,8 @@ rust-version = "1.60"
 exclude = [ ".dockerignore", ".editorconfig", ".gitattributes", ".github", ".gitignore" ]
 
 [dependencies]
-anyhow = "1"
 clap = { version = "3.2.5", features = ["derive"] }
+color-eyre = { version = "0.6.2", default-features = false }
 command-group = { version = "1.0.8", features = ["with-tokio"] }
 nix = "0.22"
 regex = "1.6.0"
@@ -22,6 +22,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["e
 users = "0.11.0"
 
 [dev-dependencies]
+indoc = "1.0.7"
 tempfile = "3.3.0"
 test-log = { version = "0.2", default-features = false, features = ["trace"] }
 tokio = { version = "1.0", features = ["time"] }

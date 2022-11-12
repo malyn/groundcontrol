@@ -1,5 +1,6 @@
 //! Starts and stops processes.
 
+use color_eyre::eyre::{self, eyre, WrapErr};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::{
@@ -7,27 +8,6 @@ use crate::{
     config::{ProcessConfig, StopMechanism},
     ShutdownReason,
 };
-
-/// Errors generated when starting processes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum StartProcessError {
-    /// Pre-run command failed.
-    /// TODO: Rename this to something that indicates that we couldn't even start the process (bad path name or not executable or something?).
-    #[error("pre-run command failed")]
-    PreRunFailed,
-
-    /// Pre-run command aborted with a non-zero exit code.
-    #[error("pre-run command aborted with exit code: {0}")]
-    PreRunAborted(i32),
-
-    /// Pre-run command was killed before it could exit.
-    #[error("pre-run commadn killed before it could exit")]
-    PreRunKilled,
-
-    /// Run command failed.
-    #[error("run command failed")]
-    RunFailed,
-}
 
 /// Errors generated when stopping processes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -66,23 +46,29 @@ enum ProcessHandle {
 pub(crate) async fn start_process(
     config: ProcessConfig,
     process_stopped: mpsc::UnboundedSender<ShutdownReason>,
-) -> Result<Process, StartProcessError> {
+) -> eyre::Result<Process> {
     tracing::info!(process_name = %config.name, "Starting process");
 
     // Perform the pre-run action, if provided.
     if let Some(pre_run) = &config.pre {
-        let (_control, monitor) =
-            command::run(&config.name, pre_run).map_err(|_| StartProcessError::PreRunFailed)?;
+        let (_control, monitor) = command::run(&config.name, pre_run)
+            .wrap_err_with(|| format!("`pre` command failed for process \"{}\"", config.name))?;
 
         match monitor.wait().await {
             ExitStatus::Exited(0) => {}
             ExitStatus::Exited(exit_code) => {
                 tracing::error!(process_name = %config.name, %exit_code, "pre-run command aborted");
-                return Err(StartProcessError::PreRunAborted(exit_code));
+                return Err(eyre!(
+                    "`pre` command failed for process \"{}\" (exit code {exit_code})",
+                    config.name
+                ));
             }
             ExitStatus::Killed => {
                 tracing::error!(process_name = %config.name, "pre-run command was killed");
-                return Err(StartProcessError::PreRunKilled);
+                return Err(eyre!(
+                    "`pre` command was killed for process \"{}\"",
+                    config.name
+                ));
             }
         }
     }
@@ -92,8 +78,8 @@ pub(crate) async fn start_process(
     let handle = if let Some(run) = &config.run {
         let (daemon_sender, daemon_receiver) = oneshot::channel();
 
-        let (control, monitor) =
-            command::run(&config.name, run).map_err(|_| StartProcessError::RunFailed)?;
+        let (control, monitor) = command::run(&config.name, run)
+            .wrap_err_with(|| format!("`run` command failed for process \"{}\"", config.name))?;
 
         // Spawn a task to wait for the command to exit, then notify
         // both ourselves (to allow `stop` to return) and the shutdown

@@ -2,7 +2,9 @@
 //! part of starting daemons and, in the case of "one-shot" processes,
 //! are the only thing that does run during the startup phase.
 
-use crate::common::{start, stop};
+use indoc::indoc;
+
+use crate::common::{assert_startup_aborted, start, stop};
 
 mod common;
 
@@ -30,7 +32,16 @@ async fn failed_pre_aborts_startup() {
 
     let (gc, _tx, dir) = start(config).await;
     let (result, output) = stop(gc, dir).await;
-    assert_eq!(Err(groundcontrol::Error::StartupAborted), result);
+
+    assert_startup_aborted(
+        indoc! {r#"
+            `pre` command failed for process "b"
+            Error starting command "/user/binary/nope"
+            No such file or directory (os error 2)
+        "#},
+        result,
+    );
+
     assert_eq!("a-pre\na-post\n", output);
 }
 
@@ -64,6 +75,15 @@ async fn failed_pre_shuts_down_earlier_processes() {
 
     let (gc, _tx, dir) = start(config).await;
     let (result, output) = stop(gc, dir).await;
-    assert_eq!(Err(groundcontrol::Error::StartupAborted), result);
+
+    assert_startup_aborted(
+        indoc! {r#"
+            `pre` command failed for process "b"
+            Error starting command "/user/binary/nope"
+            No such file or directory (os error 2)
+        "#},
+        result,
+    );
+
     assert_eq!("a-pre\na-post\n", output);
 }
