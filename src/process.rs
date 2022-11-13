@@ -148,8 +148,19 @@ impl Process {
                     };
 
                     // Wait for the daemon to stop.
-                    if daemon_receiver.await.is_err() {
-                        tracing::error!("Daemon sender dropped before delivering exit signal.");
+                    match daemon_receiver.await {
+                        Ok(ExitStatus::Exited(0)) => {
+                            tracing::debug!(process_name = %self.config.name, "Daemon exited cleanly");
+                        }
+                        Ok(ExitStatus::Exited(exit_code)) => {
+                            tracing::warn!(process_name = %self.config.name, %exit_code, "Daemon exited with non-zero exit code");
+                        }
+                        Ok(ExitStatus::Killed) => {
+                            tracing::warn!(process_name = %self.config.name, "Daemon was killed");
+                        }
+                        Err(_) => {
+                            tracing::error!("Daemon sender dropped before delivering exit signal.")
+                        }
                     }
                 }
             }
