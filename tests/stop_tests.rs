@@ -159,7 +159,8 @@ async fn failed_stop_command_continues_shutdown() {
         name = "daemon2"
         run = [ "/bin/sh", "{test-daemon.sh}", "daemon2", "{result_path}", "{temp_path}" ]
         stop = [ "/bin/sh", "-c", "exit 1" ]
-        # This won't be run, because `stop` failed.
+        # Note that `post` will be run even though `stop` failed! This
+        # is the same behavior you get if the signal-based `stop` fails.
         post = [ "/bin/sh", "-c", "echo daemon2-post >> {result_path}" ]
         "##;
 
@@ -177,14 +178,15 @@ async fn failed_stop_command_continues_shutdown() {
 
     assert!(result.is_ok());
 
-    // Note that the final two lines -- the graceful shutdown of daemon2
-    // -- are only possible because of daemon1's `post` command.
-    // Normally daemon1 would continue running, even after Ground
-    // Control has tried to exit.
+    // Note that the daemon2's graceful shutdown (including it's `post`
+    // command running) are only possible because of daemon1's `post`
+    // command. Normally daemon2 would continue running, even after
+    // Ground Control has tried to exit.
     assert_eq!(
         indoc! {r#"
             daemon1:started
             daemon2:started
+            daemon2-post
             daemon1:shutdown-requested
             daemon1:stopped
             daemon2:shutdown-requested
@@ -235,7 +237,8 @@ async fn killed_stop_command_continues_shutdown() {
         name = "daemon2"
         run = [ "/bin/sh", "{test-daemon.sh}", "daemon2", "{result_path}", "{temp_path}" ]
         stop = [ "/bin/sh", "-c", "kill -9 $$" ]
-        # This won't be run, because `stop` failed.
+        # Note that `post` will be run even though `stop` failed! This
+        # is the same behavior you get if the signal-based `stop` fails.
         post = [ "/bin/sh", "-c", "echo daemon2-post >> {result_path}" ]
         "##;
 
@@ -253,14 +256,15 @@ async fn killed_stop_command_continues_shutdown() {
 
     assert!(result.is_ok());
 
-    // Note that the final two lines -- the graceful shutdown of daemon2
-    // -- are only possible because of daemon1's `post` command.
-    // Normally daemon1 would continue running, even after Ground
-    // Control has tried to exit.
+    // Note that the daemon2's graceful shutdown (including it's `post`
+    // command running) are only possible because of daemon1's `post`
+    // command. Normally daemon2 would continue running, even after
+    // Ground Control has tried to exit.
     assert_eq!(
         indoc! {r#"
             daemon1:started
             daemon2:started
+            daemon2-post
             daemon1:shutdown-requested
             daemon1:stopped
             daemon2:shutdown-requested
@@ -311,7 +315,8 @@ async fn not_found_stop_command_continues_shutdown() {
         name = "daemon2"
         run = [ "/bin/sh", "{test-daemon.sh}", "daemon2", "{result_path}", "{temp_path}" ]
         stop = "/user/binary/nope"
-        # This won't be run, because `stop` failed.
+        # Note that `post` will be run even though `stop` failed! This
+        # is the same behavior you get if the signal-based `stop` fails.
         post = [ "/bin/sh", "-c", "echo daemon2-post >> {result_path}" ]
         "##;
 
@@ -329,14 +334,15 @@ async fn not_found_stop_command_continues_shutdown() {
 
     assert!(result.is_ok());
 
-    // Note that the final two lines -- the graceful shutdown of daemon2
-    // -- are only possible because of daemon1's `post` command.
-    // Normally daemon1 would continue running, even after Ground
-    // Control has tried to exit.
+    // Note that the daemon2's graceful shutdown (including it's `post`
+    // command running) are only possible because of daemon1's `post`
+    // command. Normally daemon2 would continue running, even after
+    // Ground Control has tried to exit.
     assert_eq!(
         indoc! {r#"
             daemon1:started
             daemon2:started
+            daemon2-post
             daemon1:shutdown-requested
             daemon1:stopped
             daemon2:shutdown-requested

@@ -5,7 +5,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use crate::{
     command::{self, CommandControl, ExitStatus},
-    config::{ProcessConfig, StopMechanism},
+    config::{CommandConfig, ProcessConfig, StopMechanism},
     ShutdownReason,
 };
 
@@ -31,26 +31,7 @@ pub(crate) async fn start_process(
 
     // Perform the pre-run action, if provided.
     if let Some(pre_run) = &config.pre {
-        let (_control, monitor) = command::run(&config.name, pre_run)
-            .wrap_err_with(|| format!("`pre` command failed for process \"{}\"", config.name))?;
-
-        match monitor.wait().await {
-            ExitStatus::Exited(0) => {}
-            ExitStatus::Exited(exit_code) => {
-                tracing::error!(process_name = %config.name, %exit_code, "pre-run command aborted");
-                return Err(eyre!(
-                    "`pre` command failed for process \"{}\" (exit code {exit_code})",
-                    config.name
-                ));
-            }
-            ExitStatus::Killed => {
-                tracing::error!(process_name = %config.name, "pre-run command was killed");
-                return Err(eyre!(
-                    "`pre` command was killed for process \"{}\"",
-                    config.name
-                ));
-            }
-        }
+        run_process_command(&config.name, ProcessPhase::PreRun, pre_run).await?;
     }
 
     // Run the process itself (if this is a daemon process with a `run`
@@ -107,46 +88,19 @@ impl Process {
             ProcessHandle::Daemon(control, mut daemon_receiver) => {
                 // Has the daemon already shut down? If so, we do not
                 // need to stop it (we just need to run the `post`
-                // command, if any).
+                // command, if any). Note that, if the `stop` operation
+                // fails, we will *not* wait for the daemon to exit,
+                // since it probably did not get our stop signal.
                 if daemon_receiver.try_recv().is_ok() {
                     tracing::debug!(process_name = %self.config.name, "Daemon already exited; no need to `stop` it.");
+                } else if let Err(err) = match self.config.stop {
+                    StopMechanism::Signal(signal) => control.kill(signal.into()),
+                    StopMechanism::Command(command) => {
+                        run_process_command(&self.config.name, ProcessPhase::Stop, &command).await
+                    }
+                } {
+                    tracing::warn!(?err, "Error stopping daemon process.");
                 } else {
-                    // Stop the daemon.
-                    match self.config.stop {
-                        StopMechanism::Signal(signal) => {
-                            if let Err(err) = control.kill(signal.into()) {
-                                tracing::warn!(?err, "Error stopping daemon process.");
-                            }
-                        }
-                        StopMechanism::Command(command) => {
-                            let (_pid, exit_receiver) = command::run(&self.config.name, &command)
-                                .wrap_err_with(|| {
-                                format!(
-                                    "`stop` command failed for process \"{}\"",
-                                    self.config.name
-                                )
-                            })?;
-
-                            match exit_receiver.wait().await {
-                                ExitStatus::Exited(0) => {}
-                                ExitStatus::Exited(exit_code) => {
-                                    tracing::error!(process_name = %self.config.name, %exit_code, "stop command aborted");
-                                    return Err(eyre!(
-                                        "`stop` command failed for process \"{}\" (exit code {exit_code})",
-                                        self.config.name
-                                    ));
-                                }
-                                ExitStatus::Killed => {
-                                    tracing::error!(process_name = %self.config.name, "stop command was killed");
-                                    return Err(eyre!(
-                                        "`stop` command was killed for process \"{}\"",
-                                        self.config.name
-                                    ));
-                                }
-                            }
-                        }
-                    };
-
                     // Wait for the daemon to stop.
                     match daemon_receiver.await {
                         Ok(ExitStatus::Exited(0)) => {
@@ -169,31 +123,56 @@ impl Process {
 
         // Execute the `post`(-run) command.
         if let Some(post_run) = &self.config.post {
-            let (_control, monitor) =
-                command::run(&self.config.name, post_run).wrap_err_with(|| {
-                    format!("`post` command failed for process \"{}\"", self.config.name)
-                })?;
-
-            match monitor.wait().await {
-                ExitStatus::Exited(0) => {}
-                ExitStatus::Exited(exit_code) => {
-                    tracing::error!(process_name = %self.config.name, %exit_code, "post-run command aborted");
-                    return Err(eyre!(
-                        "`post` command failed for process \"{}\" (exit code {exit_code})",
-                        self.config.name
-                    ));
-                }
-                ExitStatus::Killed => {
-                    tracing::error!(process_name = %self.config.name, "post-run command was killed");
-                    return Err(eyre!(
-                        "`post` command was killed for process \"{}\"",
-                        self.config.name
-                    ));
-                }
-            }
+            run_process_command(&self.config.name, ProcessPhase::PostRun, post_run).await?;
         }
 
         // The process has been stopped.
         Ok(())
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ProcessPhase {
+    PreRun,
+    Stop,
+    PostRun,
+}
+
+impl std::fmt::Display for ProcessPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProcessPhase::PreRun => write!(f, "pre"),
+            ProcessPhase::Stop => write!(f, "stop"),
+            ProcessPhase::PostRun => write!(f, "post"),
+        }
+    }
+}
+
+/// Runs one of a process's "phase" commands -- `pre`, `stop`, or
+/// `post`, but crucially, not `run` -- and returns the success or
+/// failure of the command.
+async fn run_process_command(
+    process_name: &str,
+    process_phase: ProcessPhase,
+    command: &CommandConfig,
+) -> eyre::Result<()> {
+    let (_control, monitor) = command::run(process_name, command).wrap_err_with(|| {
+        format!("`{process_phase}` command failed for process \"{process_name}\"")
+    })?;
+
+    match monitor.wait().await {
+        ExitStatus::Exited(0) => Ok(()),
+        ExitStatus::Exited(exit_code) => {
+            tracing::error!(%process_name, %process_phase, %exit_code, "command aborted");
+            Err(eyre!(
+                "`{process_phase}` command failed for process \"{process_name}\" (exit code {exit_code})",
+            ))
+        }
+        ExitStatus::Killed => {
+            tracing::error!(%process_name, %process_phase, "command was killed");
+            Err(eyre!(
+                "`{process_phase}` command was killed for process \"{process_name}\"",
+            ))
+        }
     }
 }
