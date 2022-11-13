@@ -174,9 +174,22 @@ impl Process {
                     format!("`post` command failed for process \"{}\"", self.config.name)
                 })?;
 
-            let exit_status = monitor.wait().await;
-            if !matches!(exit_status, ExitStatus::Exited(0)) {
-                tracing::error!(?exit_status, "post-run command failed.");
+            match monitor.wait().await {
+                ExitStatus::Exited(0) => {}
+                ExitStatus::Exited(exit_code) => {
+                    tracing::error!(process_name = %self.config.name, %exit_code, "post-run command aborted");
+                    return Err(eyre!(
+                        "`post` command failed for process \"{}\" (exit code {exit_code})",
+                        self.config.name
+                    ));
+                }
+                ExitStatus::Killed => {
+                    tracing::error!(process_name = %self.config.name, "post-run command was killed");
+                    return Err(eyre!(
+                        "`post` command was killed for process \"{}\"",
+                        self.config.name
+                    ));
+                }
             }
         }
 
