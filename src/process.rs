@@ -9,26 +9,6 @@ use crate::{
     ShutdownReason,
 };
 
-/// Errors generated when stopping processes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, thiserror::Error)]
-pub(crate) enum StopProcessError {
-    /// Stop command failed.
-    #[error("stop command failed")]
-    StopFailed,
-
-    /// Process aborted with a non-zero exit code.
-    #[error("process aborted with exit code: {0}")]
-    ProcessAborted(i32),
-
-    /// Process was killed before it could be stopped.
-    #[error("process killed before it could be stopped")]
-    ProcessKilled,
-
-    /// Post-run command failed.
-    #[error("post-run command failed")]
-    PostRunFailed,
-}
-
 /// Process being managed by Ground Control.
 #[derive(Debug)]
 pub(crate) struct Process {
@@ -118,7 +98,7 @@ impl Process {
     /// Stops the process: executes the `stop` command/signal if this is
     /// a daemon process; waits for the process to exit; runs the `post`
     /// command (if present).
-    pub(crate) async fn stop_process(self) -> Result<(), StopProcessError> {
+    pub(crate) async fn stop_process(self) -> eyre::Result<()> {
         tracing::info!(process_name = %self.config.name, "Stopping process.");
 
         // Stop the process (which is only required for daemon
@@ -139,21 +119,29 @@ impl Process {
                             }
                         }
                         StopMechanism::Command(command) => {
-                            let (_pid, exit_receiver) =
-                                command::run(&self.config.name, &command)
-                                    .map_err(|_| StopProcessError::StopFailed)?;
+                            let (_pid, exit_receiver) = command::run(&self.config.name, &command)
+                                .wrap_err_with(|| {
+                                format!(
+                                    "`stop` command failed for process \"{}\"",
+                                    self.config.name
+                                )
+                            })?;
 
                             match exit_receiver.wait().await {
-                                ExitStatus::Exited(0) => {
-                                    tracing::debug!(process_name = %self.config.name, "Daemon process exited cleanly");
-                                }
+                                ExitStatus::Exited(0) => {}
                                 ExitStatus::Exited(exit_code) => {
-                                    tracing::warn!(process_name = %self.config.name, %exit_code, "Daemon process aborted with non-zero exit code");
-                                    return Err(StopProcessError::ProcessAborted(exit_code));
+                                    tracing::error!(process_name = %self.config.name, %exit_code, "stop command aborted");
+                                    return Err(eyre!(
+                                        "`stop` command failed for process \"{}\" (exit code {exit_code})",
+                                        self.config.name
+                                    ));
                                 }
                                 ExitStatus::Killed => {
-                                    tracing::warn!(process_name = %self.config.name, "Daemon process was killed before it could stop");
-                                    return Err(StopProcessError::ProcessKilled);
+                                    tracing::error!(process_name = %self.config.name, "stop command was killed");
+                                    return Err(eyre!(
+                                        "`stop` command was killed for process \"{}\"",
+                                        self.config.name
+                                    ));
                                 }
                             }
                         }
@@ -170,8 +158,10 @@ impl Process {
 
         // Execute the `post`(-run) command.
         if let Some(post_run) = &self.config.post {
-            let (_control, monitor) = command::run(&self.config.name, post_run)
-                .map_err(|_| StopProcessError::PostRunFailed)?;
+            let (_control, monitor) =
+                command::run(&self.config.name, post_run).wrap_err_with(|| {
+                    format!("`post` command failed for process \"{}\"", self.config.name)
+                })?;
 
             let exit_status = monitor.wait().await;
             if !matches!(exit_status, ExitStatus::Exited(0)) {

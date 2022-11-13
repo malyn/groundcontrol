@@ -3,7 +3,7 @@
 
 use indoc::indoc;
 
-use crate::common::{assert_startup_aborted, spawn_daemon_waiter, start, stop};
+use crate::common::{spawn_daemon_waiter, start, stop};
 
 mod common;
 
@@ -16,6 +16,7 @@ async fn stop_defaults_to_sigterm() {
         [[processes]]
         name = "daemon"
         run = [ "/bin/sh", "{test-daemon.sh}", "daemon", "{result_path}", "{temp_path}" ]
+        post = [ "/bin/sh", "-c", "echo daemon-post >> {result_path}" ]
         "##;
 
     // Start Ground Control, wait for daemon to finish starting, ask
@@ -37,6 +38,7 @@ async fn stop_defaults_to_sigterm() {
             daemon:started
             daemon:shutdown-requested
             daemon:stopped
+            daemon-post
         "#},
         output
     );
@@ -53,6 +55,7 @@ async fn stop_supports_other_signals() {
         name = "daemon"
         run = [ "/bin/sh", "{test-daemon.sh}", "daemon", "{result_path}", "{temp_path}" ]
         stop = "SIGINT"
+        post = [ "/bin/sh", "-c", "echo daemon-post >> {result_path}" ]
         "##;
 
     // Start Ground Control, wait for daemon to finish starting, ask
@@ -72,6 +75,272 @@ async fn stop_supports_other_signals() {
     assert_eq!(
         indoc! {r#"
             daemon:started
+            daemon-post
+        "#},
+        output
+    );
+}
+
+/// `stop` can be a command that knows how to shut down the daemon, in
+/// this case, a `kill` command that sends a SIGTERM.
+#[test_log::test(tokio::test)]
+async fn stop_command() {
+    let config = r##"
+        [[processes]]
+        name = "daemon"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon", "{result_path}", "{temp_path}" ]
+        stop = [ "/bin/sh", "-c", "kill -TERM `cat {temp_path}/daemon.pid`" ]
+        post = [ "/bin/sh", "-c", "echo daemon-post >> {result_path}" ]
+        "##;
+
+    // Start Ground Control, wait for daemon to finish starting, ask
+    // Ground Control to shutdown, then wait for Ground Control to stop.
+    let (gc, tx, dir) = start(config).await;
+
+    let daemon_waiter = spawn_daemon_waiter(&dir, "daemon");
+    tokio::task::spawn(async move {
+        daemon_waiter.await.unwrap();
+        tx.send(()).unwrap();
+    });
+
+    let (result, output) = stop(gc, dir).await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(
+        indoc! {r#"
+            daemon:started
+            daemon:shutdown-requested
+            daemon:stopped
+            daemon-post
+        "#},
+        output
+    );
+}
+
+/// `stop` commands that fail do *not* stop the shutdown process, but
+/// instead proceed to the next daemon to stop. Note that this will
+/// almost certainly leave the original daemon running, which may block
+/// the shutdown of the container or VM (and is outside the scope of
+/// Ground Control).
+///
+/// However, we don't want to block the test, so we configure
+/// *daemon1's* `post` command to kill the daemon2 process. (this is not
+/// a normal thing to do and should not be replicated outside of testing
+/// scenarios)
+///
+/// Note that Ground Control *could* be changed to kill every processes
+/// in the daemon's process group as an attempt to clean up after this
+/// situation. *But,* it is also worth noting that this is issue is
+/// effectively a bug in the Ground Control specification, since `stop`
+/// commands should not fail in their *attempt* to shut down their
+/// target daemon.
+#[test_log::test(tokio::test)]
+async fn failed_stop_command_continues_shutdown() {
+    let config = r##"
+        [[processes]]
+        name = "daemon1"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon1", "{result_path}", "{temp_path}" ]
+        # Shut down daemon2 (which never got the `stop` signal) so that
+        # the test will not hang. (don't do this in Prod)
+        post = [ "/bin/sh", "-c", "kill -TERM `cat {temp_path}/daemon2.pid`" ]
+
+        # Ground Control starts daemons (invokes their `run` commands)
+        # as fast as it can and has no way to know if a daemon is going
+        # to stay running (which is why it begins monitoring the
+        # daemons *after* startup has completed); we need to serialize
+        # the startup operations in the test though so that we can have
+        # predictable output.
+        [[processes]]
+        name = "wait-daemon1-start"
+        pre = [ "/bin/sh", "{wait-daemon-start.sh}", "daemon1", "{temp_path}" ]
+
+        [[processes]]
+        name = "daemon2"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon2", "{result_path}", "{temp_path}" ]
+        stop = [ "/bin/sh", "-c", "exit 1" ]
+        # This won't be run, because `stop` failed.
+        post = [ "/bin/sh", "-c", "echo daemon2-post >> {result_path}" ]
+        "##;
+
+    // Start Ground Control, wait for daemon2 to finish starting, ask
+    // Ground Control to shutdown, then wait for Ground Control to stop.
+    let (gc, tx, dir) = start(config).await;
+
+    let daemon_waiter = spawn_daemon_waiter(&dir, "daemon2");
+    tokio::task::spawn(async move {
+        daemon_waiter.await.unwrap();
+        tx.send(()).unwrap();
+    });
+
+    let (result, output) = stop(gc, dir).await;
+
+    assert!(result.is_ok());
+
+    // Note that the final two lines -- the graceful shutdown of daemon2
+    // -- are only possible because of daemon1's `post` command.
+    // Normally daemon1 would continue running, even after Ground
+    // Control has tried to exit.
+    assert_eq!(
+        indoc! {r#"
+            daemon1:started
+            daemon2:started
+            daemon1:shutdown-requested
+            daemon1:stopped
+            daemon2:shutdown-requested
+            daemon2:stopped
+        "#},
+        output
+    );
+}
+
+/// `stop` commands that fail do *not* stop the shutdown process, but
+/// instead proceed to the next daemon to stop. Note that this will
+/// almost certainly leave the original daemon running, which may block
+/// the shutdown of the container or VM (and is outside the scope of
+/// Ground Control).
+///
+/// However, we don't want to block the test, so we configure
+/// *daemon1's* `post` command to kill the daemon2 process. (this is not
+/// a normal thing to do and should not be replicated outside of testing
+/// scenarios)
+///
+/// Note that Ground Control *could* be changed to kill every processes
+/// in the daemon's process group as an attempt to clean up after this
+/// situation. *But,* it is also worth noting that this is issue is
+/// effectively a bug in the Ground Control specification, since `stop`
+/// commands should not fail in their *attempt* to shut down their
+/// target daemon.
+#[test_log::test(tokio::test)]
+async fn killed_stop_command_continues_shutdown() {
+    let config = r##"
+        [[processes]]
+        name = "daemon1"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon1", "{result_path}", "{temp_path}" ]
+        # Shut down daemon2 (which never got the `stop` signal) so that
+        # the test will not hang. (don't do this in Prod)
+        post = [ "/bin/sh", "-c", "kill -TERM `cat {temp_path}/daemon2.pid`" ]
+
+        # Ground Control starts daemons (invokes their `run` commands)
+        # as fast as it can and has no way to know if a daemon is going
+        # to stay running (which is why it begins monitoring the
+        # daemons *after* startup has completed); we need to serialize
+        # the startup operations in the test though so that we can have
+        # predictable output.
+        [[processes]]
+        name = "wait-daemon1-start"
+        pre = [ "/bin/sh", "{wait-daemon-start.sh}", "daemon1", "{temp_path}" ]
+
+        [[processes]]
+        name = "daemon2"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon2", "{result_path}", "{temp_path}" ]
+        stop = [ "/bin/sh", "-c", "kill -9 $$" ]
+        # This won't be run, because `stop` failed.
+        post = [ "/bin/sh", "-c", "echo daemon2-post >> {result_path}" ]
+        "##;
+
+    // Start Ground Control, wait for daemon2 to finish starting, ask
+    // Ground Control to shutdown, then wait for Ground Control to stop.
+    let (gc, tx, dir) = start(config).await;
+
+    let daemon_waiter = spawn_daemon_waiter(&dir, "daemon2");
+    tokio::task::spawn(async move {
+        daemon_waiter.await.unwrap();
+        tx.send(()).unwrap();
+    });
+
+    let (result, output) = stop(gc, dir).await;
+
+    assert!(result.is_ok());
+
+    // Note that the final two lines -- the graceful shutdown of daemon2
+    // -- are only possible because of daemon1's `post` command.
+    // Normally daemon1 would continue running, even after Ground
+    // Control has tried to exit.
+    assert_eq!(
+        indoc! {r#"
+            daemon1:started
+            daemon2:started
+            daemon1:shutdown-requested
+            daemon1:stopped
+            daemon2:shutdown-requested
+            daemon2:stopped
+        "#},
+        output
+    );
+}
+
+/// `stop` commands that do not exist do *not* stop the shutdown
+/// process, but instead proceed to the next daemon to stop. Note that
+/// this will almost certainly leave the original daemon running, which
+/// may block the shutdown of the container or VM (and is outside the
+/// scope of Ground Control).
+///
+/// However, we don't want to block the test, so we configure
+/// *daemon1's* `post` command to kill the daemon2 process. (this is not
+/// a normal thing to do and should not be replicated outside of testing
+/// scenarios)
+///
+/// Note that Ground Control *could* be changed to kill every processes
+/// in the daemon's process group as an attempt to clean up after this
+/// situation. *But,* it is also worth noting that this is issue is
+/// effectively a bug in the Ground Control specification, since `stop`
+/// commands should not fail in their *attempt* to shut down their
+/// target daemon.
+#[test_log::test(tokio::test)]
+async fn not_found_stop_command_continues_shutdown() {
+    let config = r##"
+        [[processes]]
+        name = "daemon1"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon1", "{result_path}", "{temp_path}" ]
+        # Shut down daemon2 (which never got the `stop` signal) so that
+        # the test will not hang. (don't do this in Prod)
+        post = [ "/bin/sh", "-c", "kill -TERM `cat {temp_path}/daemon2.pid`" ]
+
+        # Ground Control starts daemons (invokes their `run` commands)
+        # as fast as it can and has no way to know if a daemon is going
+        # to stay running (which is why it begins monitoring the
+        # daemons *after* startup has completed); we need to serialize
+        # the startup operations in the test though so that we can have
+        # predictable output.
+        [[processes]]
+        name = "wait-daemon1-start"
+        pre = [ "/bin/sh", "{wait-daemon-start.sh}", "daemon1", "{temp_path}" ]
+
+        [[processes]]
+        name = "daemon2"
+        run = [ "/bin/sh", "{test-daemon.sh}", "daemon2", "{result_path}", "{temp_path}" ]
+        stop = "/user/binary/nope"
+        # This won't be run, because `stop` failed.
+        post = [ "/bin/sh", "-c", "echo daemon2-post >> {result_path}" ]
+        "##;
+
+    // Start Ground Control, wait for daemon2 to finish starting, ask
+    // Ground Control to shutdown, then wait for Ground Control to stop.
+    let (gc, tx, dir) = start(config).await;
+
+    let daemon_waiter = spawn_daemon_waiter(&dir, "daemon2");
+    tokio::task::spawn(async move {
+        daemon_waiter.await.unwrap();
+        tx.send(()).unwrap();
+    });
+
+    let (result, output) = stop(gc, dir).await;
+
+    assert!(result.is_ok());
+
+    // Note that the final two lines -- the graceful shutdown of daemon2
+    // -- are only possible because of daemon1's `post` command.
+    // Normally daemon1 would continue running, even after Ground
+    // Control has tried to exit.
+    assert_eq!(
+        indoc! {r#"
+            daemon1:started
+            daemon2:started
+            daemon1:shutdown-requested
+            daemon1:stopped
+            daemon2:shutdown-requested
+            daemon2:stopped
         "#},
         output
     );
