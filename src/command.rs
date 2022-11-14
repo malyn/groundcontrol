@@ -5,6 +5,7 @@ use std::{env, process::Stdio};
 use color_eyre::eyre::{self, eyre, WrapErr};
 use command_group::{AsyncCommandGroup, AsyncGroupChild};
 use nix::unistd::Pid;
+use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
 use tokio::sync::oneshot;
 
@@ -64,13 +65,20 @@ pub(crate) fn run(
     let mut command = tokio::process::Command::new(&config.program);
 
     // Add the arguments, and perform environment variable substitution.
-    command.args(
-        config
-            .args
-            .iter()
-            .map(substitute_env_var)
-            .collect::<Vec<String>>(),
-    );
+    match config
+        .args
+        .iter()
+        .map(substitute_env_var)
+        .collect::<eyre::Result<Vec<String>>>()
+    {
+        Ok(args) => command.args(args),
+        Err(err) => {
+            return Err(err.wrap_err(format!(
+                "Environment variable expansion failed for command \"{}\"",
+                config.program
+            )))
+        }
+    };
 
     // Clear the environment, add back in `PATH`, then add any other
     // allowed environment variables.
@@ -83,7 +91,7 @@ pub(crate) fn run(
     for key in &config.env_vars {
         command.env(
             key,
-            env::var(key).wrap_err_with(|| format!("Missing environment variable \"{key}\""))?,
+            env::var(key).map_err(|_| eyre!("Unknown environment variable \"{key}\""))?,
         );
     }
 
@@ -128,13 +136,28 @@ pub(crate) fn run(
     ))
 }
 
-fn substitute_env_var(s: impl AsRef<str>) -> String {
-    Regex::new(r"\{\{([A-Za-z0-9_]+)\}\}")
-        .expect("Failed to compile regular expression")
+fn substitute_env_var(s: impl AsRef<str>) -> eyre::Result<String> {
+    static TEMPLATE_VAR_REGEX: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\{\{([A-Za-z0-9_]+)\}\}").expect("regex should be valid"));
+
+    // Make sure that every variable mentioned in a template expression
+    // is a valid environment variable, returning an error if one or
+    // more unknown variables are found. Otherwise replace all of the
+    // template expressions with the value of the associated environment
+    // variable.
+    TEMPLATE_VAR_REGEX
+        .captures_iter(s.as_ref())
+        .map(|caps| {
+            std::env::var(&caps[1])
+                .map_err(|_| eyre!("Unknown environment variable \"{}\"", &caps[1]))
+        })
+        .collect::<eyre::Result<String>>()?;
+
+    Ok(TEMPLATE_VAR_REGEX
         .replace_all(s.as_ref(), |caps: &Captures| {
             std::env::var(&caps[1]).expect("Unable to find environment variable")
         })
-        .into_owned()
+        .into_owned())
 }
 
 fn monitor_process(
