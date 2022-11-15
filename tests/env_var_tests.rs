@@ -8,8 +8,40 @@ use crate::common::{assert_startup_aborted, start, stop};
 
 mod common;
 
-/// By default, only the PATH environment variable is made available to
-/// commands.
+/// By default, all environment variables are flowed through to every
+/// command.
+#[test_log::test(tokio::test)]
+async fn all_vars_by_default() {
+    // Create some environment variables, including an override of the
+    // PATH variable so that it contains a predictable value.
+    std::env::set_var("PATH", "im_the_path");
+    std::env::set_var("TESTVAR1", "one");
+    std::env::set_var("TESTVAR2", "two");
+
+    let config = r##"
+        [[processes]]
+        name = "daemon"
+        run = [ "/bin/sh", "-c", "echo $PATH $TESTVAR1 $TESTVAR2 >> {result_path}" ]
+        "##;
+
+    // Start Ground Control, which will shut down immediately because
+    // the "daemon" exited immediately (but with a clean shutdown exit
+    // code).
+    let (gc, _tx, dir) = start(config).await;
+    let (result, output) = stop(gc, dir).await;
+
+    assert!(result.is_ok());
+
+    assert_eq!(
+        indoc! {r#"
+            im_the_path one two
+        "#},
+        output
+    );
+}
+
+/// `only-env` can be used to restrict the variables available to the
+/// command; if provided, but empty, then only `PATH` will be allowed.
 #[test_log::test(tokio::test)]
 async fn only_path_by_default() {
     // Create some environment variables, including an override of the
@@ -21,7 +53,7 @@ async fn only_path_by_default() {
     let config = r##"
         [[processes]]
         name = "daemon"
-        run = [ "/bin/sh", "-c", "echo $PATH $TESTVAR1 $TESTVAR2 >> {result_path}" ]
+        run = { only-env = [], command = [ "/bin/sh", "-c", "echo $PATH $TESTVAR1 $TESTVAR2 >> {result_path}" ] }
         "##;
 
     // Start Ground Control, which will shut down immediately because
@@ -52,8 +84,8 @@ async fn allow_additional_vars() {
     let config = r##"
         [[processes]]
         name = "daemon"
-        pre = [ "/bin/sh", "-c", "echo pre: $PATH $TESTVAR1 $TESTVAR2 >> {result_path}" ]
-        run = { env-vars = ["TESTVAR2"], command = [ "/bin/sh", "-c", "echo run: $PATH $TESTVAR1 $TESTVAR2 >> {result_path}" ] }
+        pre = { only-env = [], command = [ "/bin/sh", "-c", "echo pre: $PATH $TESTVAR1 $TESTVAR2 >> {result_path}" ] }
+        run = { only-env = ["TESTVAR2"], command = [ "/bin/sh", "-c", "echo run: $PATH $TESTVAR1 $TESTVAR2 >> {result_path}" ] }
         "##;
 
     // Start Ground Control, which will shut down immediately because
@@ -79,7 +111,7 @@ async fn allowed_vars_requires_variable_to_exist() {
     let config = r##"
         [[processes]]
         name = "daemon"
-        run = { env-vars = ["MISSINGVAR"], command = [ "/bin/sh", "-c", "echo $MISSINGVAR >> {result_path}" ] }
+        run = { only-env = ["MISSINGVAR"], command = [ "/bin/sh", "-c", "echo $MISSINGVAR >> {result_path}" ] }
         "##;
 
     let (gc, _tx, dir) = start(config).await;
@@ -107,7 +139,7 @@ async fn template_expansion_bypasses_allowed_vars() {
     let config = r##"
         [[processes]]
         name = "daemon"
-        run = { command = [ "/bin/sh", "-c", "echo $PATH $TESTVAR1 {{TESTVAR2}} >> {result_path}" ] }
+        run = { only-env = [], command = [ "/bin/sh", "-c", "echo $PATH $TESTVAR1 {{TESTVAR2}} >> {result_path}" ] }
         "##;
 
     // Start Ground Control, which will shut down immediately because
@@ -139,8 +171,8 @@ async fn template_expansion_and_allowed_vars() {
     let config = r##"
         [[processes]]
         name = "daemon"
-        pre = [ "/bin/sh", "-c", "echo pre: $PATH $TESTVAR1 {{TESTVAR2}} >> {result_path}" ]
-        run = { env-vars = ["TESTVAR2"], command = [ "/bin/sh", "-c", "echo run: $PATH {{TESTVAR1}} $TESTVAR2 >> {result_path}" ] }
+        pre = { only-env = [], command = [ "/bin/sh", "-c", "echo pre: $PATH $TESTVAR1 {{TESTVAR2}} >> {result_path}" ] }
+        run = { only-env = ["TESTVAR2"], command = [ "/bin/sh", "-c", "echo run: $PATH {{TESTVAR1}} $TESTVAR2 >> {result_path}" ] }
         "##;
 
     // Start Ground Control, which will shut down immediately because

@@ -99,8 +99,13 @@ pub struct CommandConfig {
     /// user that executed Ground Control (most likely `root`).
     pub user: Option<String>,
 
-    /// Environment variables to pass through to the command.
-    pub env_vars: HashSet<String>,
+    /// If present, then only the given list of environment variables
+    /// will be passed through to the command (all other variables will
+    /// be removed from the command's environment). Note that `PATH` is
+    /// always allowed. All environment variables will be allowed if
+    /// this value is `None`. If provided, but empty, then no variables
+    /// other than `PATH` will be allowed.
+    pub only_env: Option<HashSet<String>>,
 
     /// Program to execute.
     pub program: String,
@@ -124,7 +129,7 @@ impl From<CommandLineConfig> for CommandConfig {
                 let (program, args) = config.program_and_args();
                 Self {
                     user: None,
-                    env_vars: Default::default(),
+                    only_env: None,
                     program,
                     args,
                 }
@@ -133,7 +138,7 @@ impl From<CommandLineConfig> for CommandConfig {
                 let (program, args) = config.command.program_and_args();
                 Self {
                     user: config.user,
-                    env_vars: config.env_vars,
+                    only_env: config.only_env,
                     program,
                     args,
                 }
@@ -189,7 +194,7 @@ struct DetailedCommandLine {
     user: Option<String>,
 
     #[serde(default)]
-    env_vars: HashSet<String>,
+    only_env: Option<HashSet<String>>,
 
     command: CommandLine,
 }
@@ -225,7 +230,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
-                env_vars: Default::default(),
+                only_env: None,
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -244,7 +249,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
-                env_vars: Default::default(),
+                only_env: None,
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -263,7 +268,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
-                env_vars: Default::default(),
+                only_env: None,
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -279,7 +284,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: Some(String::from("app")),
-                env_vars: Default::default(),
+                only_env: None,
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -298,7 +303,7 @@ mod tests {
         assert_eq!(
             CommandConfig {
                 user: None,
-                env_vars: Default::default(),
+                only_env: None,
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),
@@ -309,12 +314,28 @@ mod tests {
             decoded.run
         );
 
-        let toml = r#"run = { user = "app", env-vars = ["USER", "HOME"], command = ["/app/run-me.sh", "using", "these", "args"] }"#;
+        let toml = r#"run = { user = "app", only-env = [], command = ["/app/run-me.sh", "using", "these", "args"] }"#;
         let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
         assert_eq!(
             CommandConfig {
                 user: Some(String::from("app")),
-                env_vars: HashSet::from(["USER".into(), "HOME".into()]),
+                only_env: Some(HashSet::new()),
+                program: String::from("/app/run-me.sh"),
+                args: vec![
+                    String::from("using"),
+                    String::from("these"),
+                    String::from("args"),
+                ]
+            },
+            decoded.run
+        );
+
+        let toml = r#"run = { user = "app", only-env = ["USER", "HOME"], command = ["/app/run-me.sh", "using", "these", "args"] }"#;
+        let decoded: CommandConfigTest = toml::from_str(toml).expect("Failed to parse test TOML");
+        assert_eq!(
+            CommandConfig {
+                user: Some(String::from("app")),
+                only_env: Some(HashSet::from(["USER".into(), "HOME".into()])),
                 program: String::from("/app/run-me.sh"),
                 args: vec![
                     String::from("using"),

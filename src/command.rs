@@ -80,19 +80,21 @@ pub(crate) fn run(
         }
     };
 
-    // Clear the environment, add back in `PATH`, then add any other
-    // allowed environment variables.
-    command.env_clear();
+    // Clear the environment if `only_env` was provided, then add back
+    // in `PATH` and any other allowed environment variables.
+    if let Some(only_env) = &config.only_env {
+        command.env_clear();
 
-    if let Ok(path) = env::var("PATH") {
-        command.env("PATH", path);
-    }
+        if let Ok(path) = env::var("PATH") {
+            command.env("PATH", path);
+        }
 
-    for key in &config.env_vars {
-        command.env(
-            key,
-            env::var(key).map_err(|_| eyre!("Unknown environment variable \"{key}\""))?,
-        );
+        for key in only_env {
+            command.env(
+                key,
+                env::var(key).map_err(|_| eyre!("Unknown environment variable \"{key}\""))?,
+            );
+        }
     }
 
     // Set the uid and gid if provided.
