@@ -1,12 +1,17 @@
 //! Configuration structs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::Deserialize;
 
 /// Ground Control configuration.
 #[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Optional list of additional variables to add to the environment.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+
     /// *Ordered* list of processes to start.
     pub processes: Vec<ProcessConfig>,
 }

@@ -59,6 +59,11 @@ pub async fn run(config: Config, mut shutdown: mpsc::UnboundedReceiver<()>) -> R
     // daemon process.
     let (shutdown_sender, mut shutdown_receiver) = mpsc::unbounded_channel::<ShutdownReason>();
 
+    // Set extra environment variables.
+    for (key, value) in &config.env {
+        std::env::set_var(key, value);
+    }
+
     // Start every process in the order they were found in the config
     // file.
     let mut running: Vec<Process> = Vec::with_capacity(config.processes.len());

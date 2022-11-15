@@ -19,7 +19,7 @@ tree:
 
 # Auto-build and run tests
 watchtest:
-    cargo watch -x "nextest run --all-features"
+    cargo watch -x "nextest run --all-features --no-fail-fast"
 
 # Preflight checklist. Does everything that could fail on the build machine
 preflight:
