@@ -46,24 +46,6 @@ async fn main() -> eyre::Result<()> {
         std::process::abort();
     }));
 
-    // Set the RUST_LOG, if it hasn't been explicitly defined
-    if std::env::var_os("RUST_LOG").is_none() {
-        std::env::set_var("RUST_LOG", "info")
-    }
-
-    // Create our tracing subscriber, manually bringing in EnvFilter so
-    // that we can specify a custom format *and still get environment
-    // variable-based filtering.* See this GitHub issue for the
-    // difference between `tracing_subscriber::fmt::init()` and
-    // `tracing_subscriber::fmt().init()` (the latter does *not*
-    // automatically bring in EnvFilter, for example):
-    // <https://github.com/tokio-rs/tracing/issues/1329#issuecomment-808682793>
-    // TODO: We don't actually need this; this was only required back when we supported text *or* JSON.
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .with_writer(std::io::stdout)
-        .init();
-
     // Parse the command line arguments.
     let cli = Cli::parse();
 
@@ -77,6 +59,20 @@ async fn main() -> eyre::Result<()> {
     if cli.check {
         return Ok(());
     }
+
+    // Initialize the tracing subscriber with our custom formatter.
+    // Default to INFO-level logging, but allow that to be overridden
+    // using an environment variable.
+    if std::env::var_os("RUST_LOG").is_none() {
+        std::env::set_var("RUST_LOG", "info")
+    }
+    tracing_subscriber::fmt()
+        .event_format(
+            groundcontrol::formatter::GroundControlFormatter::from_config(&config)
+                .with_include_timestamp(!config.suppress_timestamps),
+        )
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
 
     // Create the external shutdown signal (used to shut down Ground
     // Control on UNIX signals).

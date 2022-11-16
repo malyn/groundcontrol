@@ -27,7 +27,7 @@ pub(crate) async fn start_process(
     config: ProcessConfig,
     process_stopped: mpsc::UnboundedSender<ShutdownReason>,
 ) -> eyre::Result<Process> {
-    tracing::info!(process_name = %config.name, "Starting process");
+    tracing::info!("Starting process {}", config.name);
 
     // Perform the pre-run action, if provided.
     if let Some(pre_run) = &config.pre {
@@ -50,7 +50,7 @@ pub(crate) async fn start_process(
             let exit_status = monitor.wait().await;
 
             if daemon_sender.send(exit_status).is_err() {
-                tracing::error!(%process_name, "Daemon receiver dropped before receiving exit signal.");
+                tracing::error!(process = %process_name, "Daemon receiver dropped before receiving exit signal.");
             }
 
             let shutdown_reason = match exit_status {
@@ -60,7 +60,7 @@ pub(crate) async fn start_process(
 
             if let Err(err) = process_stopped.send(shutdown_reason) {
                 tracing::error!(
-                    %process_name,
+                    process = %process_name,
                     ?err,
                     "Shutdown receiver dropped before all processes have exited."
                 );
@@ -80,7 +80,7 @@ impl Process {
     /// a daemon process; waits for the process to exit; runs the `post`
     /// command (if present).
     pub(crate) async fn stop_process(self) -> eyre::Result<()> {
-        tracing::info!(process_name = %self.config.name, "Stopping process.");
+        tracing::info!("Stopping process {}", self.config.name);
 
         // Stop the process (which is only required for daemon
         // processes; one-shot processes never "started").
@@ -92,25 +92,25 @@ impl Process {
                 // fails, we will *not* wait for the daemon to exit,
                 // since it probably did not get our stop signal.
                 if daemon_receiver.try_recv().is_ok() {
-                    tracing::debug!(process_name = %self.config.name, "Daemon already exited; no need to `stop` it.");
+                    tracing::debug!(process = %self.config.name, "Process already exited; no need to `stop` it.");
                 } else if let Err(err) = match self.config.stop {
                     StopMechanism::Signal(signal) => control.kill(signal.into()),
                     StopMechanism::Command(command) => {
                         run_process_command(&self.config.name, ProcessPhase::Stop, &command).await
                     }
                 } {
-                    tracing::warn!(?err, "Error stopping daemon process.");
+                    tracing::warn!(process = %self.config.name, ?err, "Error stopping process.");
                 } else {
                     // Wait for the daemon to stop.
                     match daemon_receiver.await {
                         Ok(ExitStatus::Exited(0)) => {
-                            tracing::debug!(process_name = %self.config.name, "Daemon exited cleanly");
+                            tracing::debug!(process = %self.config.name, "Process exited cleanly");
                         }
                         Ok(ExitStatus::Exited(exit_code)) => {
-                            tracing::warn!(process_name = %self.config.name, %exit_code, "Daemon exited with non-zero exit code");
+                            tracing::warn!(process = %self.config.name, %exit_code, "Process exited with non-zero exit code");
                         }
                         Ok(ExitStatus::Killed) => {
-                            tracing::warn!(process_name = %self.config.name, "Daemon was killed");
+                            tracing::warn!(process = %self.config.name, "Process was killed");
                         }
                         Err(_) => {
                             tracing::error!("Daemon sender dropped before delivering exit signal.")
@@ -156,20 +156,19 @@ async fn run_process_command(
     process_phase: ProcessPhase,
     command: &CommandConfig,
 ) -> eyre::Result<()> {
-    let (_control, monitor) = command::run(process_name, command).wrap_err_with(|| {
-        format!("`{process_phase}` command failed for process \"{process_name}\"")
-    })?;
+    let (_control, monitor) = command::run(&format!("{process_name}[{process_phase}]"), command)
+        .wrap_err_with(|| {
+            format!("`{process_phase}` command failed for process \"{process_name}\"")
+        })?;
 
     match monitor.wait().await {
         ExitStatus::Exited(0) => Ok(()),
         ExitStatus::Exited(exit_code) => {
-            tracing::error!(%process_name, %process_phase, %exit_code, "command aborted");
             Err(eyre!(
                 "`{process_phase}` command failed for process \"{process_name}\" (exit code {exit_code})",
             ))
         }
         ExitStatus::Killed => {
-            tracing::error!(%process_name, %process_phase, "command was killed");
             Err(eyre!(
                 "`{process_phase}` command was killed for process \"{process_name}\"",
             ))

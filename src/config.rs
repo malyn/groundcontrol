@@ -8,6 +8,12 @@ use serde::Deserialize;
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    /// Suppress the timestamp field from the log output (useful on
+    /// systems that prepend the log output with their own, timestamped
+    /// log output).
+    #[serde(default)]
+    pub suppress_timestamps: bool,
+
     /// Optional list of additional variables to add to the environment.
     #[serde(default)]
     pub env: HashMap<String, String>,

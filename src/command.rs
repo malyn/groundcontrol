@@ -7,7 +7,10 @@ use command_group::{AsyncCommandGroup, AsyncGroupChild};
 use nix::unistd::Pid;
 use once_cell::sync::Lazy;
 use regex::{Captures, Regex};
-use tokio::sync::oneshot;
+use tokio::{
+    io::{AsyncBufReadExt, BufReader},
+    sync::oneshot,
+};
 
 use crate::config::CommandConfig;
 
@@ -104,15 +107,15 @@ pub(crate) fn run(
         command.uid(user.uid()).gid(user.primary_group_id());
     };
 
-    // Disable stdin, and map stdout and stderr to our own stdout and
-    // stderr.
+    // Disable stdin, and pipe stdout and stderr so that we can read
+    // and process the output.
     command
         .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
 
     // Run the command.
-    let child = command
+    let mut child = command
         .group_spawn()
         .wrap_err_with(|| format!("Error starting command \"{}\"", config.program))?;
     let pid = nix::unistd::Pid::from_raw(child.id().ok_or_else(|| {
@@ -123,6 +126,38 @@ pub(crate) fn run(
     })? as i32);
 
     tracing::debug!(%name, %pid, "Command running");
+
+    // Read stdout and stderr and send them to the console via
+    // specially-targeted `tracing` events.
+    let stdout = child
+        .inner()
+        .stdout
+        .take()
+        .expect("failed to get stdout from child process");
+    let mut reader = BufReader::new(stdout).lines();
+    let process = name.to_string();
+    tokio::task::spawn({
+        async move {
+            while let Ok(Some(line)) = reader.next_line().await {
+                tracing::info!(target: "stdout", %process, output = line);
+            }
+        }
+    });
+
+    let stderr = child
+        .inner()
+        .stderr
+        .take()
+        .expect("failed to get stderr from child process");
+    let mut reader = BufReader::new(stderr).lines();
+    let process = name.to_string();
+    tokio::task::spawn({
+        async move {
+            while let Ok(Some(line)) = reader.next_line().await {
+                tracing::info!(target: "stderr", %process, output = line);
+            }
+        }
+    });
 
     // Listen for the command to complete.
     let (sender, receiver) = oneshot::channel();
