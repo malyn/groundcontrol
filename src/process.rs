@@ -49,6 +49,11 @@ pub(crate) async fn start_process(
         tokio::spawn(async move {
             let exit_status = monitor.wait().await;
 
+            // TODO: Should this ever really happen? I would prefer to
+            // just `expect` here if it is not possible. *But,* we need
+            // to verify that, during some sort of startup/shutdown
+            // failure, that we do not drop things too early and then
+            // the receiver is gone.
             if daemon_sender.send(exit_status).is_err() {
                 tracing::error!(process = %process_name, "Daemon receiver dropped before receiving exit signal.");
             }
@@ -113,6 +118,13 @@ impl Process {
                             tracing::warn!(process = %self.config.name, "Process was killed");
                         }
                         Err(_) => {
+                            // TODO: Should this ever really happen? I
+                            // would prefer to just `expect` here if it
+                            // is not possible. *But,* we need to verify
+                            // that, during some sort of
+                            // startup/shutdown failure, that we do not
+                            // drop things too early and then receiver
+                            // is gone.
                             tracing::error!("Daemon sender dropped before delivering exit signal.")
                         }
                     }
