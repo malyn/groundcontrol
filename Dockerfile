@@ -1,23 +1,41 @@
+# syntax=docker/dockerfile:1
+
+########################################################################
+## xx Cross-Compilation Helper
+########################################################################
+
+FROM --platform=${BUILDPLATFORM} tonistiigi/xx:1.2.1 AS xx
+
+
+########################################################################
+## Rust Builder
 ####################################################################################################
-## Builder
-####################################################################################################
 
-FROM rust:1.62.0-alpine3.16 AS builder
+FROM --platform=${BUILDPLATFORM} rust:1.68.0-alpine3.17 as builder
 
-RUN apk update && apk add --no-cache musl-dev
+# Copy over the xx cross-compilation helpers, then install the required
+# compilers, linkers and development libraries.
+COPY --from=xx / /
+RUN apk update && apk add --no-cache clang lld musl-dev
 
+# Copy the source itself.
 WORKDIR /app
 COPY ./ .
-RUN cargo build --release
+
+# Build the Rust binary (for the target platform).
+ARG TARGETPLATFORM
+RUN CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse \
+    xx-cargo build --release --target-dir ./build && \
+    xx-verify ./build/$(xx-cargo --print-target-triple)/release/groundcontrol && \
+    cp ./build/$(xx-cargo --print-target-triple)/release/groundcontrol /groundcontrol
 
 
-####################################################################################################
-## Final image
-####################################################################################################
+########################################################################
+## Final Image
+########################################################################
 
 FROM scratch
 
-WORKDIR /
-COPY --from=builder /app/target/release/groundcontrol ./
+COPY --from=builder /groundcontrol /groundcontrol
 
 ENTRYPOINT ["/groundcontrol"]
