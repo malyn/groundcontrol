@@ -113,7 +113,7 @@ async fn template_expansion() {
 
         [[processes]]
         name = "daemon"
-        run = [ "/bin/sh", "-c", "echo {{TESTVAR1}} $TESTVAR2 {{TESTVAR3}} $TESTVAR4 >> {result_path}" ]
+        run = [ "/bin/sh", "-c", "echo {{TESTVAR1}} $TESTVAR2 {{ TESTVAR3 }} $TESTVAR4 >> {result_path}" ]
         "##;
 
     let (gc, _tx, dir) = start(config).await;

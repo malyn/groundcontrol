@@ -175,7 +175,7 @@ pub(crate) fn run(
 
 fn substitute_env_var(s: impl AsRef<str>) -> eyre::Result<String> {
     static TEMPLATE_VAR_REGEX: Lazy<Regex> =
-        Lazy::new(|| Regex::new(r"\{\{([A-Za-z0-9_]+)\}\}").expect("regex should be valid"));
+        Lazy::new(|| Regex::new(r"\{\{ *([A-Za-z0-9_]+) *\}\}").expect("regex should be valid"));
 
     // Make sure that every variable mentioned in a template expression
     // is a valid environment variable, returning an error if one or
