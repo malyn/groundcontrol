@@ -25,6 +25,16 @@ multiple-versions = "deny"
 wildcards = "deny"
 highlight = "all"
 deny = [{ name = "openssl" }, { name = "openssl-sys" }]
+skip = [
+    { name = "hermit-abi", version = "0.1" },            # from tokio v1.26.0
+    { name = "windows-sys", version = "0.36" },          # from tokio v1.26.0
+    { name = "windows-sys", version = "0.42" },          # from tempfile v3.4.0
+    { name = "windows_aarch64_msvc", version = "0.36" }, # from tokio v1.26.0
+    { name = "windows_i686_gnu", version = "0.36" },     # from tokio v1.26.0
+    { name = "windows_i686_msvc", version = "0.36" },    # from tokio v1.26.0
+    { name = "windows_x86_64_gnu", version = "0.36" },   # from tokio v1.26.0
+    { name = "windows_x86_64_msvc", version = "0.36" },  # from tokio v1.26.0
+]
 
 [sources]
 unknown-registry = "deny"
