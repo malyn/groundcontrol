@@ -2,14 +2,10 @@ name: Build & Publish
 
 on:
   push:
-    # Publish `main` as Docker `latest` image.
     branches:
       - main
-
-    # Publish `v1.2.3` tags as releases.
     tags:
       - v*
-
   pull_request:
     branches:
       - main
@@ -19,7 +15,6 @@ env:
 
 jobs:
   build:
-    # The type of runner that the job will run on
     runs-on: ubuntu-latest
 
     strategy:
@@ -82,37 +77,42 @@ jobs:
       contents: read
       packages: write
 
-    env:
-      IMAGE_NAME: groundcontrol
-
     steps:
       - name: Checkout sources
         uses: actions/checkout@v3
 
-      - name: Build Docker image
-        run: docker build -f Dockerfile -t $IMAGE_NAME .
+      - name: Set up QEMU for Docker
+        uses: docker/setup-qemu-action@v2
 
-      - name: Log in to registry
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u $ --password-stdin
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
 
-      # Example from here: https://docs.github.com/en/packages/managing-github-packages-using-github-actions-workflows/publishing-and-installing-a-package-with-github-actions#upgrading-a-workflow-that-accesses-ghcrio
-      - name: Push Docker image to GitHub Container Registry
-        run: |
-          # Initialize $IMAGE_ID, changing uppercase to lowercase.
-          IMAGE_ID=ghcr.io/${{ github.repository_owner }}/$IMAGE_NAME
-          IMAGE_ID=$(echo $IMAGE_ID | tr '[A-Z]' '[a-z]')
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-          # Initialize $VERSION from the GitHub ref; if the ref is a tag
-          # then strip off the "v" (version number) prefix.
-          VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
-          [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
+      - name: Set Docker metadata
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            name=ghcr.io/malyn/groundcontrol
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
-          # Convert `main` (branch) to `latest` (tag)
-          [ "$VERSION" == "main" ] && VERSION=latest
-
-          # Tag and push the image.
-          echo IMAGE_ID=$IMAGE_ID
-          echo VERSION=$VERSION
-          docker tag $IMAGE_NAME $IMAGE_ID:$VERSION
-          docker push $IMAGE_ID:$VERSION
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha
