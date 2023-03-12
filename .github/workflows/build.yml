@@ -91,18 +91,27 @@ jobs:
             [worker.oci]
               max-parallelism = 2
 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+        if: github.event_name != 'pull_request'
+
       - name: Login to GitHub Container Registry
         uses: docker/login-action@v2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+        if: github.event_name != 'pull_request'
 
       - name: Set Docker metadata
         id: meta
         uses: docker/metadata-action@v4
         with:
           images: |
+            name=malyn/groundcontrol
             name=ghcr.io/malyn/groundcontrol
           flavor: latest=false
           tags: |
