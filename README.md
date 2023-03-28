@@ -34,3 +34,28 @@ impetus for Ground Control)
 -   No external dependencies. Does not rely on the presence of a shell to start
     or stop processes, or to pass environment variables as arguments to
     commands.
+
+## Conduct
+
+This project adheres to the
+[Contributor Covenant Code of Conduct](https://github.com/malyn/groundcontrol/blob/main/CODE_OF_CONDUCT.md).
+This describes the minimum behavior expected from all contributors.
+
+## License
+
+Licensed under either of
+
+-   Apache License, Version 2.0
+    ([LICENSE-APACHE](https://github.com/malyn/groundcontrol/blob/main/LICENSE-APACHE)
+    or <https://www.apache.org/licenses/LICENSE-2.0>)
+-   MIT license
+    ([LICENSE-MIT](https://github.com/malyn/groundcontrol/blob/main/LICENSE-MIT)
+    or <https://opensource.org/licenses/MIT>)
+
+at your option.
+
+## Contribution
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.
