@@ -1,6 +1,6 @@
 [package]
 name = "groundcontrol"
-version = "0.1.0"
+version = "1.0.0"
 publish = false
 authors = ["Michael Alyn Miller <malyn@strangeGizmo.com>"]
 edition = "2021"
