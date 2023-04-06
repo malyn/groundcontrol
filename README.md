@@ -14,11 +14,12 @@ be PID 1 and is fully compatible with [micro-VM environments like Fly.io][].
 (the need to get multi-process Docker containers running on Fly.io was the
 impetus for Ground Control)
 
-See [this blog post][groundcontrolpost] for more information on the
-genesis of Ground Control.
+See [this blog post][groundcontrolpost] for more information on the genesis of
+Ground Control.
 
 [foreman]: https://ddollar.github.io/foreman/
-[groundcontrolpost]: https://michaelalynmiller.com/blog/2023/04/05/multi-process-docker-containers/
+[groundcontrolpost]:
+    https://michaelalynmiller.com/blog/2023/04/05/multi-process-docker-containers/
 [micro-vm environments like fly.io]: https://fly.io/blog/docker-without-docker/
 [s6-overlay]: https://github.com/just-containers/s6-overlay
 [systemd's]: https://systemd.io
@@ -51,7 +52,8 @@ genesis of Ground Control.
 [dialtun]: https://github.com/malyn/dialtun
 [dialtungctoml]: https://github.com/malyn/dialtun/blob/main/groundcontrol.toml
 [superguppy]: https://github.com/malyn/superguppy
-[superguppygctoml]: https://github.com/malyn/superguppy/blob/main/groundcontrol.toml
+[superguppygctoml]:
+    https://github.com/malyn/superguppy/blob/main/groundcontrol.toml
 
 ## Conduct
 

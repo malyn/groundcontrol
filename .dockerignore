@@ -1,5 +1,6 @@
 /.git
 /.vscode
+/node_modules
 /samples
 /target
 *.md
@@ -10,3 +11,4 @@
 .prettierc
 Dockerfile
 Justfile
+package*.json

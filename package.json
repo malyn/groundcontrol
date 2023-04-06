@@ -1,0 +1,6 @@
+{
+  "name": "groundcontrol",
+  "devDependencies": {
+    "prettier": "2.8.0"
+  }
+}
