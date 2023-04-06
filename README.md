@@ -39,6 +39,20 @@ genesis of Ground Control.
     or stop processes, or to pass environment variables as arguments to
     commands.
 
+## Examples
+
+-   [Super Guppy][superguppy] uses Ground Control to provide a
+    batteries-included private crate registry for Rust projects. (Super Guppy's
+    [`groundcontrol.toml`][superguppygctoml] file)
+-   [dialtun][dialtun] dynamically maps HTTP ports on dev boxes to public HTTPS
+    hostnames, and uses Ground Control to start Tailscale before running an
+    NGINX server. (dialtun's [`groundcontrol.toml`][dialtungctoml] file)
+
+[dialtun]: https://github.com/malyn/dialtun
+[dialtungctoml]: https://github.com/malyn/dialtun/blob/main/groundcontrol.toml
+[superguppy]: https://github.com/malyn/superguppy
+[superguppygctoml]: https://github.com/malyn/superguppy/blob/main/groundcontrol.toml
+
 ## Conduct
 
 This project adheres to the
