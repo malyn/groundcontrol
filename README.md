@@ -26,19 +26,16 @@ Ground Control.
 
 ## Features
 
--   Starts and monitors multiple processes using a simple, TOML-based config
-    file.
--   Supports both one-shot and long-running processes.
--   Pre- and Post-startup _and_ shutdown hooks for all process types.
--   Environment variable filtering and routing: full control over which
-    variables can be seen by each process.
--   Console output multiplexing; stdout/stderr from all processes will appear on
-    Ground Control's output.
--   Basic dependency management through predictable startup and shutdown
-    ordering.
--   No external dependencies. Does not rely on the presence of a shell to start
-    or stop processes, or to pass environment variables as arguments to
-    commands.
+- Starts and monitors multiple processes using a simple, TOML-based config file.
+- Supports both one-shot and long-running processes.
+- Pre- and Post-startup _and_ shutdown hooks for all process types.
+- Environment variable filtering and routing: full control over which variables
+  can be seen by each process.
+- Console output multiplexing; stdout/stderr from all processes will appear on
+  Ground Control's output.
+- Basic dependency management through predictable startup and shutdown ordering.
+- No external dependencies. Does not rely on the presence of a shell to start or
+  stop processes, or to pass environment variables as arguments to commands.
 
 ## Usage
 
@@ -107,26 +104,26 @@ binaries or shell scripts that are used to start and stop the process.
 
 Ground Control supports four types of commands (all of which are optional):
 
--   `pre`: One-shot command that runs as part of the startup phase.
--   `run`: Optional command that starts the long-running portion of this
-    process. If not present, and `pre` _is_ present, then this process is
-    considered a one-shot process. Note that all commands are optional, which
-    means that a process could include only a `post` command if it's only
-    purpose is to run a command during shutdown.
--   `stop`: Mechanism used to stop a long-running process: can be either a
-    command (binary or shell script) or the name of a signal (`SIGINT`,
-    `SIGQUIT`, or `SIGTERM`). Defaults to using `SIGTERM` to stop the command
-    started by `run`. Ignored if the process does not include a `run` statement
-    (since one-shot processes do not need to be "stopped").
--   `post`: Command to run during the shutdown phase, perhaps to clean up any
-    resources used by the process, disconnect from a VPN, initiate a backup
-    operation, etc. Both one-shot and long-running processes can use the `post`
-    command.
+- `pre`: One-shot command that runs as part of the startup phase.
+- `run`: Optional command that starts the long-running portion of this process.
+  If not present, and `pre` _is_ present, then this process is considered a
+  one-shot process. Note that all commands are optional, which means that a
+  process could include only a `post` command if it's only purpose is to run a
+  command during shutdown.
+- `stop`: Mechanism used to stop a long-running process: can be either a command
+  (binary or shell script) or the name of a signal (`SIGINT`, `SIGQUIT`, or
+  `SIGTERM`). Defaults to using `SIGTERM` to stop the command started by `run`.
+  Ignored if the process does not include a `run` statement (since one-shot
+  processes do not need to be "stopped").
+- `post`: Command to run during the shutdown phase, perhaps to clean up any
+  resources used by the process, disconnect from a VPN, initiate a backup
+  operation, etc. Both one-shot and long-running processes can use the `post`
+  command.
 
 Command values can take one of three formats (all of which can use the
 environment variable expansion feature explained later):
 
--   A basic [TOML string][tomlstring]:
+- A basic [TOML string][tomlstring]:
 
     ```toml
     [[processes]]
@@ -134,8 +131,8 @@ environment variable expansion feature explained later):
     pre = "/bin/echo -n Hello {{USER}}! How are you today?"
     ```
 
--   A [TOML array][tomlarray], where each array element is one argument to the
-    process (this is helpful to avoid the need to quote special characters):
+- A [TOML array][tomlarray], where each array element is one argument to the
+  process (this is helpful to avoid the need to quote special characters):
 
     ```toml
     [[processes]]
@@ -143,8 +140,8 @@ environment variable expansion feature explained later):
     pre = [ "/bin/echo", "-n", "Hello {{USER}}! How are you today?" ]
     ```
 
--   A [TOML table][tomltable], usually an [inline table][tomlinlinetable], used
-    to set `user` or limit access to environment variables:
+- A [TOML table][tomltable], usually an [inline table][tomlinlinetable], used to
+  set `user` or limit access to environment variables:
 
     ```toml
     [[processes]]
@@ -192,8 +189,8 @@ the process (except `PATH`, which is always included).
 
 Examples:
 
--   The following command has access to every environment variable (because it
-    does _not_ include an `only-env` statement):
+- The following command has access to every environment variable (because it
+  does _not_ include an `only-env` statement):
 
     ```toml
     [[processes]]
@@ -201,8 +198,8 @@ Examples:
     pre = "/usr/bin/printenv"
     ```
 
--   This command is only able to see `USER` and `HOME` (and `PATH`, which Ground
-    Control always includes in the environment):
+- This command is only able to see `USER` and `HOME` (and `PATH`, which Ground
+  Control always includes in the environment):
 
     ```toml
     [[processes]]
@@ -210,9 +207,9 @@ Examples:
     pre = { only-env = ["USER", "HOME"], command = "/usr/bin/printenv" }
     ```
 
--   This command cannot see _any_ environment variables (other than `PATH`), but
-    note that _environment variable expansion bypasses environment filtering,_
-    so `USER` does not need to be included in order for expansion to work:
+- This command cannot see _any_ environment variables (other than `PATH`), but
+  note that _environment variable expansion bypasses environment filtering,_ so
+  `USER` does not need to be included in order for expansion to work:
 
     ```toml
     [[processes]]
@@ -220,8 +217,8 @@ Examples:
     pre = { only-env = [], command = "/bin/echo -n Hello {{USER}}! How are you today?" }
     ```
 
--   Different commands in the same process can have access to different
-    environment variables:
+- Different commands in the same process can have access to different
+  environment variables:
 
     ```toml
     [[processes]]
@@ -241,35 +238,36 @@ Examples:
 
 ## Examples
 
--   [Super Guppy][superguppy] uses Ground Control to provide a
-    batteries-included private crate registry for Rust projects. (Super Guppy's
-    [`groundcontrol.toml`][superguppygctoml] file)
--   [dialtun][dialtun] dynamically maps HTTP ports on dev boxes to public HTTPS
-    hostnames, and uses Ground Control to start Tailscale before running an
-    NGINX server. (dialtun's [`groundcontrol.toml`][dialtungctoml] file)
+- [Super Guppy][superguppy] uses Ground Control to provide a batteries-included
+  private crate registry for Rust projects. (Super Guppy's
+  [`groundcontrol.toml`][superguppygctoml] file)
+- [dialtun][dialtun] dynamically maps HTTP ports on dev boxes to public HTTPS
+  hostnames, and uses Ground Control to start Tailscale before running an NGINX
+  server. (dialtun's [`groundcontrol.toml`][dialtungctoml] file)
 
-[dialtun]: https://github.com/malyn/dialtun
-[dialtungctoml]: https://github.com/malyn/dialtun/blob/main/groundcontrol.toml
-[superguppy]: https://github.com/malyn/superguppy
+[dialtun]: https://codeberg.org/malyn/dialtun
+[dialtungctoml]:
+    https://codeberg.org/malyn/dialtun/raw/branch/main/groundcontrol.toml
+[superguppy]: https://codeberg.org/malyn/superguppy
 [superguppygctoml]:
-    https://github.com/malyn/superguppy/blob/main/groundcontrol.toml
+    https://codeberg.org/malyn/superguppy/raw/branch/main/groundcontrol.toml
 
 ## Conduct
 
 This project adheres to the
-[Contributor Covenant Code of Conduct](https://github.com/malyn/groundcontrol/blob/main/CODE_OF_CONDUCT.md).
+[Contributor Covenant Code of Conduct](https://codeberg.org/malyn/groundcontrol/raw/branch/main/CODE_OF_CONDUCT.md).
 This describes the minimum behavior expected from all contributors.
 
 ## License
 
 Licensed under either of
 
--   Apache License, Version 2.0
-    ([LICENSE-APACHE](https://github.com/malyn/groundcontrol/blob/main/LICENSE-APACHE)
-    or <https://www.apache.org/licenses/LICENSE-2.0>)
--   MIT license
-    ([LICENSE-MIT](https://github.com/malyn/groundcontrol/blob/main/LICENSE-MIT)
-    or <https://opensource.org/licenses/MIT>)
+- Apache License, Version 2.0
+  ([LICENSE-APACHE](https://codeberg.org/malyn/groundcontrol/raw/branch/main/LICENSE-APACHE)
+  or <https://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license
+  ([LICENSE-MIT](https://codeberg.org/malyn/groundcontrol/raw/branch/main/LICENSE-MIT)
+  or <https://opensource.org/licenses/MIT>)
 
 at your option.
 
